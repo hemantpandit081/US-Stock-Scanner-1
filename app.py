@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime
 
+
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -15,11 +16,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+
 # =========================================================
 # SETTINGS
 # =========================================================
 
 AUTO_REFRESH_SECONDS = 60
+
+# Volume is considered "near the same" when it is within
+# this percentage of a previous scan volume.
+VOLUME_SIMILARITY_PERCENT = 15
+
+# Number of previous scans remembered
+MAX_VOLUME_HISTORY = 20
 
 
 # =========================================================
@@ -30,12 +39,13 @@ st.markdown(
     """
     <style>
 
-    /* Reduce empty space */
+    /* Reduce page spacing */
     .block-container {
-        padding-top: 0.5rem;
+        padding-top: 0.4rem;
         padding-bottom: 0.2rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+        max-width: 100%;
     }
 
     /* Hide Streamlit footer */
@@ -43,12 +53,18 @@ st.markdown(
         visibility: hidden;
     }
 
-    /* Stock buttons */
+    /* Compact stock buttons */
     div.stButton > button {
         width: 100%;
-        min-height: 34px;
-        padding: 3px 6px;
+        min-height: 30px;
+        padding: 2px 6px;
         font-size: 13px;
+        text-align: left;
+    }
+
+    /* Reduce expander spacing */
+    div[data-testid="stExpander"] {
+        margin-bottom: 5px;
     }
 
     </style>
@@ -63,8 +79,10 @@ st.markdown(
 
 st.markdown(
     f"""
-    <meta http-equiv="refresh"
-    content="{AUTO_REFRESH_SECONDS}">
+    <meta
+        http-equiv="refresh"
+        content="{AUTO_REFRESH_SECONDS}"
+    >
     """,
     unsafe_allow_html=True
 )
@@ -78,18 +96,21 @@ if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = "NVDA"
 
 
+if "volume_history" not in st.session_state:
+    st.session_state.volume_history = {}
+
+
+if "scan_number" not in st.session_state:
+    st.session_state.scan_number = 0
+
+
 # =========================================================
 # ACTIVE US STOCK UNIVERSE
-#
-# This is a large list of liquid and actively traded
-# NASDAQ and NYSE stocks.
-#
-# We can expand this later.
 # =========================================================
 
 STOCKS = [
 
-    # Technology / Mega Cap
+    # Mega Cap / Technology
     "AAPL", "MSFT", "NVDA", "AMD", "AVGO",
     "GOOGL", "GOOG", "META", "AMZN", "TSLA",
     "NFLX", "ORCL", "CRM", "ADBE", "INTC",
@@ -99,64 +120,64 @@ STOCKS = [
     "HOOD", "SOFI", "AFRM", "UPST", "PYPL",
     "COIN", "MSTR", "IBKR", "FUTU", "NU",
 
-    # AI / Quantum
-    "AI", "SOUN", "BBAI", "PATH", "IONQ",
-    "RGTI", "QBTS", "QUBT",
+    # AI
+    "AI", "SOUN", "BBAI", "PATH",
 
-    # Crypto / Bitcoin
+    # Quantum
+    "IONQ", "RGTI", "QBTS", "QUBT",
+
+    # Crypto
     "MARA", "RIOT", "CLSK", "CIFR",
     "IREN", "BTDR", "HUT",
 
     # EV
     "RIVN", "LCID", "NIO", "XPEV",
-    "LI", "NKLA", "CHPT",
+    "LI", "CHPT",
 
-    # Semiconductors
+    # Semiconductor
     "AMAT", "LRCX", "KLAC", "MRVL",
     "ON", "WOLF", "COHR",
 
-    # Energy
+    # Nuclear / Energy
     "SMR", "OKLO", "UEC", "UUUU",
-    "CCJ", "URA",
+    "CCJ",
 
-    # Space / Defence
+    # Space
     "RKLB", "ASTS", "LUNR", "RDW",
+
+    # Defence
     "KTOS", "LMT", "NOC",
 
     # Biotech / Healthcare
-    "MRNA", "BNTX", "CRSP", "RXRX",
-    "TEM", "HIMS",
+    "MRNA", "BNTX", "CRSP",
+    "RXRX", "TEM", "HIMS",
 
-    # Retail / Consumer
-    "WMT", "COST", "TGT", "NKE",
-    "LULU", "CAVA", "CMG",
-
-    # Internet / Communication
+    # Internet
     "RDDT", "SNAP", "PINS", "ROKU",
     "UBER", "LYFT", "DASH",
 
+    # Consumer
+    "WMT", "COST", "TGT",
+    "NKE", "LULU", "CAVA", "CMG",
+
     # Banks
-    "JPM", "BAC", "C", "WFC",
-    "GS", "MS",
+    "JPM", "BAC", "C",
+    "WFC", "GS", "MS",
 
     # Industrial
     "BA", "GE", "CAT", "DE",
 
-    # High Activity Stocks
-    "GME", "AMC", "PLUG", "OPEN",
-    "JOBY", "ACHR", "LAES",
-
-    # ETFs often useful for market direction
-    "SPY", "QQQ", "IWM"
+    # High Activity
+    "GME", "AMC", "PLUG",
+    "OPEN", "JOBY", "ACHR"
 ]
 
 
 # =========================================================
-# DOWNLOAD STOCK DATA
+# DOWNLOAD MARKET DATA
 # =========================================================
 
 @st.cache_data(ttl=45)
-
 def get_market_data():
 
     results = []
@@ -165,7 +186,7 @@ def get_market_data():
 
         data = yf.download(
             STOCKS,
-            period="5d",
+            period="10d",
             interval="1d",
             group_by="ticker",
             auto_adjust=False,
@@ -182,6 +203,11 @@ def get_market_data():
                 if len(stock_data) < 2:
                     continue
 
+
+                # -----------------------------------------
+                # PRICE
+                # -----------------------------------------
+
                 previous_close = float(
                     stock_data["Close"].iloc[-2]
                 )
@@ -190,9 +216,19 @@ def get_market_data():
                     stock_data["Close"].iloc[-1]
                 )
 
-                volume = int(
+
+                # -----------------------------------------
+                # VOLUME
+                # -----------------------------------------
+
+                current_volume = float(
                     stock_data["Volume"].iloc[-1]
                 )
+
+
+                # -----------------------------------------
+                # CHANGE %
+                # -----------------------------------------
 
                 if previous_close <= 0:
                     continue
@@ -205,23 +241,83 @@ def get_market_data():
                     / previous_close
                 ) * 100
 
+
+                # -----------------------------------------
+                # RELATIVE VOLUME
+                #
+                # Current volume compared with average
+                # of previous available trading days.
+                # -----------------------------------------
+
+                previous_volumes = (
+                    stock_data["Volume"]
+                    .iloc[:-1]
+                )
+
+                average_volume = float(
+                    previous_volumes.mean()
+                )
+
+                if average_volume > 0:
+
+                    rvol = (
+                        current_volume
+                        / average_volume
+                    )
+
+                else:
+
+                    rvol = 0
+
+
+                # -----------------------------------------
+                # DOLLAR VOLUME
+                # Price × Volume
+                # -----------------------------------------
+
+                dollar_volume = (
+                    current_price
+                    * current_volume
+                )
+
+
+                # -----------------------------------------
+                # SAVE RESULT
+                # -----------------------------------------
+
                 results.append(
                     {
                         "Ticker": ticker,
+
                         "Price": round(
                             current_price,
                             2
                         ),
+
                         "Change %": round(
                             change_percent,
                             2
                         ),
-                        "Volume": volume
+
+                        "Volume": int(
+                            current_volume
+                        ),
+
+                        "RVOL": round(
+                            rvol,
+                            2
+                        ),
+
+                        "Dollar Volume": round(
+                            dollar_volume,
+                            0
+                        )
                     }
                 )
 
             except Exception:
                 continue
+
 
     except Exception as error:
 
@@ -229,7 +325,69 @@ def get_market_data():
             f"Market data error: {error}"
         )
 
-    return pd.DataFrame(results)
+
+    return pd.DataFrame(
+        results
+    )
+
+
+# =========================================================
+# VOLUME RETURN DETECTION
+# =========================================================
+
+def check_volume_return(
+    ticker,
+    current_volume,
+    history
+):
+
+    previous_volumes = history.get(
+        ticker,
+        []
+    )
+
+
+    # No previous scan data
+    if len(previous_volumes) == 0:
+
+        return False
+
+
+    for previous_volume in previous_volumes:
+
+        if previous_volume <= 0:
+            continue
+
+
+        # Calculate percentage difference
+        difference_percent = abs(
+            (
+                current_volume
+                - previous_volume
+            )
+            / previous_volume
+        ) * 100
+
+
+        # Near same volume
+        if (
+            difference_percent
+            <= VOLUME_SIMILARITY_PERCENT
+        ):
+
+            return True
+
+
+        # Current volume is higher
+        if (
+            current_volume
+            > previous_volume
+        ):
+
+            return True
+
+
+    return False
 
 
 # =========================================================
@@ -239,19 +397,20 @@ def get_market_data():
 st.markdown(
     """
     <div style="
-        font-size:26px;
+        font-size:24px;
         font-weight:700;
-        margin-bottom:0px;
+        line-height:1.1;
     ">
-        📈 US STOCK SCREENER
+        US STOCK SCREENER
     </div>
     """,
     unsafe_allow_html=True
 )
 
+
 st.caption(
-    f"Active US Stocks • Auto Refresh: "
-    f"{AUTO_REFRESH_SECONDS} seconds"
+    "Active US Stocks • "
+    f"Auto Refresh: {AUTO_REFRESH_SECONDS}s"
 )
 
 
@@ -259,11 +418,17 @@ st.caption(
 # FILTERS
 # =========================================================
 
-with st.expander("⚙ Filters"):
+with st.expander(
+    "⚙ Filters",
+    expanded=False
+):
 
-    col1, col2, col3, col4 = st.columns(4)
+    row1_col1, row1_col2, row1_col3 = (
+        st.columns(3)
+    )
 
-    with col1:
+
+    with row1_col1:
 
         min_price = st.number_input(
             "Minimum Price",
@@ -272,7 +437,8 @@ with st.expander("⚙ Filters"):
             step=0.50
         )
 
-    with col2:
+
+    with row1_col2:
 
         max_price = st.number_input(
             "Maximum Price",
@@ -281,7 +447,8 @@ with st.expander("⚙ Filters"):
             step=10.0
         )
 
-    with col3:
+
+    with row1_col3:
 
         min_change = st.number_input(
             "Minimum Change %",
@@ -289,7 +456,13 @@ with st.expander("⚙ Filters"):
             step=0.50
         )
 
-    with col4:
+
+    row2_col1, row2_col2, row2_col3 = (
+        st.columns(3)
+    )
+
+
+    with row2_col1:
 
         min_volume = st.number_input(
             "Minimum Volume",
@@ -299,59 +472,230 @@ with st.expander("⚙ Filters"):
         )
 
 
+    with row2_col2:
+
+        min_rvol = st.number_input(
+            "Minimum Relative Volume",
+            min_value=0.0,
+            value=1.0,
+            step=0.10
+        )
+
+
+    with row2_col3:
+
+        min_dollar_volume = st.number_input(
+            "Minimum Dollar Volume",
+            min_value=0.0,
+            value=1000000.0,
+            step=1000000.0,
+            format="%.0f"
+        )
+
+
+    # ---------------------------------------------
+    # CHART INTERVAL
+    # ---------------------------------------------
+
+    chart_interval = st.selectbox(
+        "Chart Interval",
+        options=[
+            "1",
+            "5",
+            "15",
+            "30",
+            "60",
+            "240",
+            "D"
+        ],
+        format_func=lambda x: {
+            "1": "1 Minute",
+            "5": "5 Minutes",
+            "15": "15 Minutes",
+            "30": "30 Minutes",
+            "60": "1 Hour",
+            "240": "4 Hours",
+            "D": "1 Day"
+        }[x],
+        index=1
+    )
+
+
 # =========================================================
 # LOAD MARKET DATA
 # =========================================================
 
-with st.spinner("Scanning US stocks..."):
+with st.spinner(
+    "Scanning active US stocks..."
+):
 
     df = get_market_data()
 
 
 # =========================================================
-# FILTER DATA
+# STOP IF NO DATA
 # =========================================================
 
 if df.empty:
 
     st.warning(
-        "No market data is currently available."
+        "No market data available."
     )
 
     st.stop()
 
 
+# =========================================================
+# UPDATE VOLUME HISTORY
+# =========================================================
+
+df["Volume Signal"] = False
+
+
+for index, row in df.iterrows():
+
+    ticker = row["Ticker"]
+
+    current_volume = row["Volume"]
+
+
+    # Check against previous scans
+    volume_signal = check_volume_return(
+
+        ticker=ticker,
+
+        current_volume=current_volume,
+
+        history=st.session_state.volume_history
+    )
+
+
+    df.at[
+        index,
+        "Volume Signal"
+    ] = volume_signal
+
+
+    # Create ticker history
+    if ticker not in (
+        st.session_state.volume_history
+    ):
+
+        st.session_state.volume_history[
+            ticker
+        ] = []
+
+
+    # Add current volume
+    st.session_state.volume_history[
+        ticker
+    ].append(
+        current_volume
+    )
+
+
+    # Keep only recent history
+    st.session_state.volume_history[
+        ticker
+    ] = (
+
+        st.session_state.volume_history[
+            ticker
+        ][
+            -MAX_VOLUME_HISTORY:
+        ]
+
+    )
+
+
+st.session_state.scan_number += 1
+
+
+# =========================================================
+# APPLY FILTERS
+# =========================================================
+
 filtered_df = df.copy()
 
+
 filtered_df = filtered_df[
-    (filtered_df["Price"] >= min_price)
+
+    (
+        filtered_df["Price"]
+        >= min_price
+    )
+
     &
-    (filtered_df["Price"] <= max_price)
+
+    (
+        filtered_df["Price"]
+        <= max_price
+    )
+
     &
-    (filtered_df["Change %"] >= min_change)
+
+    (
+        filtered_df["Change %"]
+        >= min_change
+    )
+
     &
-    (filtered_df["Volume"] >= min_volume)
+
+    (
+        filtered_df["Volume"]
+        >= min_volume
+    )
+
+    &
+
+    (
+        filtered_df["RVOL"]
+        >= min_rvol
+    )
+
+    &
+
+    (
+        filtered_df["Dollar Volume"]
+        >= min_dollar_volume
+    )
+
 ]
 
 
 # =========================================================
-# SORT BY MOMENTUM
+# SORT
 # =========================================================
 
 filtered_df = filtered_df.sort_values(
-    by="Change %",
-    ascending=False
+
+    by=[
+        "Volume Signal",
+        "RVOL",
+        "Change %"
+    ],
+
+    ascending=[
+        False,
+        False,
+        False
+    ]
+
 )
 
 
 # =========================================================
 # MAIN LAYOUT
-# 35% LEFT / 65% RIGHT
+# 65% STOCK LIST
+# 35% CHART
 # =========================================================
 
 left_col, right_col = st.columns(
-    [35, 65],
+
+    [65, 35],
+
     gap="small"
+
 )
 
 
@@ -362,22 +706,34 @@ left_col, right_col = st.columns(
 
 with left_col:
 
+
     st.markdown(
         f"### Stocks ({len(filtered_df)})"
     )
 
-    # Only show first 30 to keep screen clean
-    display_df = filtered_df.head(30)
+
+    st.caption(
+        "■ = Volume returned / "
+        "similar volume / higher volume"
+    )
+
+
+    display_df = filtered_df.head(
+        50
+    )
+
 
     if display_df.empty:
 
         st.warning(
-            "No stocks match the filters."
+            "No stocks match your filters."
         )
+
 
     else:
 
         for _, row in display_df.iterrows():
+
 
             ticker = row["Ticker"]
 
@@ -387,53 +743,112 @@ with left_col:
 
             volume = row["Volume"]
 
-            if change >= 0:
-                icon = "🟢"
+            rvol = row["RVOL"]
+
+            volume_signal = row[
+                "Volume Signal"
+            ]
+
+
+            # -----------------------------------------
+            # WHITE SOLID BOX SIGNAL
+            # -----------------------------------------
+
+            if volume_signal:
+
+                signal = "■"
+
             else:
-                icon = "🔴"
+
+                signal = " "
+
 
             button_text = (
-                f"{icon} {ticker} | "
-                f"${price:.2f} | "
-                f"{change:+.2f}%"
+
+                f"{signal} "
+
+                f"{ticker}  |  "
+
+                f"${price:.2f}  |  "
+
+                f"{change:+.2f}%  |  "
+
+                f"RVOL {rvol:.2f}  |  "
+
+                f"VOL {volume:,.0f}"
+
             )
 
+
             if st.button(
+
                 button_text,
+
                 key=f"stock_{ticker}",
+
                 use_container_width=True
+
             ):
 
-                st.session_state.selected_stock = ticker
+                st.session_state.selected_stock = (
+                    ticker
+                )
 
                 st.rerun()
 
 
 # =========================================================
 # RIGHT SIDE
-# TRADINGVIEW CHART
+# CHART
 # =========================================================
 
 with right_col:
 
-    selected = st.session_state.selected_stock
+
+    selected = (
+        st.session_state.selected_stock
+    )
+
 
     st.markdown(
         f"### {selected}"
     )
 
+
+    # =====================================================
+    # TRADINGVIEW EMBED
+    #
+    # hidesidetoolbar=0 keeps side controls available.
+    # =====================================================
+
     tradingview_html = f"""
+
     <div
+
         style="
             width:100%;
-            height:calc(100vh - 150px);
-            min-height:600px;
+            height:calc(100vh - 155px);
+            min-height:550px;
         "
+
     >
 
         <iframe
 
-            src="https://www.tradingview.com/widgetembed/?symbol={selected}&interval=5&hidesidetoolbar=1&symboledit=1&saveimage=1&toolbarbg=f1f3f6&studies=%5B%5D&theme=light&style=1&withdateranges=1"
+            src="
+            https://www.tradingview.com/widgetembed/
+            ?symbol={selected}
+            &interval={chart_interval}
+            &hidesidetoolbar=0
+            &symboledit=1
+            &saveimage=1
+            &toolbarbg=f1f3f6
+            &studies=%5B%5D
+            &theme=light
+            &style=1
+            &withdateranges=1
+            &allow_symbol_change=1
+            "
 
             style="
                 width:100%;
@@ -443,16 +858,23 @@ with right_col:
 
             frameborder="0"
 
-            allowtransparency="true">
+            allowtransparency="true"
+
+        >
 
         </iframe>
 
     </div>
+
     """
 
+
     components.html(
+
         tradingview_html,
+
         height=650
+
     )
 
 
@@ -464,21 +886,37 @@ current_time = datetime.now().strftime(
     "%H:%M:%S"
 )
 
+
 st.markdown(
+
     f"""
+
     <div style="
+
         text-align:center;
+
         font-size:11px;
+
         color:gray;
+
         margin-top:2px;
+
     ">
 
         🔄 Auto ON |
-        Updated: {current_time} |
-        Scanned: {len(STOCKS)} stocks |
-        Results: {len(filtered_df)}
+
+        Scan #{st.session_state.scan_number} |
+
+        Updated {current_time} |
+
+        Scanned {len(STOCKS)} stocks |
+
+        Results {len(filtered_df)}
 
     </div>
+
     """,
+
     unsafe_allow_html=True
+
 )
