@@ -2,4 +2,4 @@ streamlit
 pandas
 numpy
 requests
-webull-openapi-python-sdk==2.0.19
+webull-openapi-python-sdk==3.0.0
