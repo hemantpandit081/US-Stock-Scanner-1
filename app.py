@@ -1,16 +1,16 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+from datetime import datetime
 import json
 import os
 import time
-from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 # ============================================================
 # WEBULL IMPORTS
 # ============================================================
-
 from webull.core.client import ApiClient
 from webull.data.common.category import Category
 from webull.data.common.timespan import Timespan
@@ -19,117 +19,122 @@ from webull.data.data_client import DataClient
 # ============================================================
 # PAGE CONFIG
 # ============================================================
-
 st.set_page_config(
     page_title="US Stock Scanner",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # ============================================================
-# CUSTOM CSS
+# CUSTOM CSS (FIT TO SINGLE SCREEN / NO PAGE SCROLL)
 # ============================================================
-
-st.markdown("""
+st.markdown(
+    """
 <style>
+/* Hide Streamlit default elements */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+header { visibility: hidden; }
 
-#MainMenu {
-    visibility: hidden;
-}
-
-footer {
-    visibility: hidden;
-}
-
-header {
-    visibility: hidden;
+/* Lock viewport page scrolling */
+html, body, [data-testid="stAppViewContainer"] {
+    height: 100vh;
+    overflow: hidden !important;
 }
 
 .block-container {
-    padding-top: 0.4rem;
-    padding-left: 0.6rem;
-    padding-right: 0.6rem;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    max-height: 98vh;
 }
 
+/* Scanner Column Styling */
 .scanner-title {
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
-    margin-bottom: 5px;
+    margin-bottom: 2px;
+    line-height: 1.2;
 }
 
-.small-text {
-    font-size: 11px;
-    color: #888;
+/* Tabs & Container Height Constraints */
+[data-testid="stTab"] {
+    padding: 2px 8px !important;
 }
 
-.stock-row {
-    border-bottom: 1px solid #303030;
-    padding: 6px 3px;
+[data-testid="stTabPanel"] {
+    max-height: 82vh;
+    overflow-y: auto !important;
+    padding-right: 4px;
 }
 
-.stock-symbol {
-    font-weight: 700;
-    font-size: 14px;
+/* Custom scrollbars */
+::-webkit-scrollbar {
+    width: 4px;
+}
+::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 2px;
 }
 
-.stock-name {
-    font-size: 11px;
-    color: #888;
-}
-
-.repeat-box {
-    font-size: 13px;
-    font-weight: 700;
-}
-
-.green {
-    color: #00c853;
-}
-
-.red {
-    color: #ff5252;
-}
-
-.tab-note {
-    font-size: 11px;
-    color: #888;
-    margin-bottom: 5px;
-}
-
+.green { color: #00c853; }
+.red { color: #ff5252; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ============================================================
 # CONSTANTS
 # ============================================================
-
 SETTINGS_FILE = "scanner_settings.json"
 WATCHLIST_FILE = "watchlist.json"
-
 NY = ZoneInfo("America/New_York")
 
-# ============================================================
-# STARTER SYMBOL UNIVERSE
-#
-# IMPORTANT:
-# Replace/expand this with your complete US universe later.
-# ============================================================
-
 DEFAULT_SYMBOLS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "META",
-    "GOOGL", "GOOG", "TSLA", "AVGO", "AMD",
-    "NFLX", "INTC", "MU", "QCOM", "AMAT",
-    "ARM", "PLTR", "SMCI", "COIN", "HOOD",
-    "SOFI", "BAC", "JPM", "WMT", "COST",
-    "UBER", "SHOP", "PDD", "NIO", "RIVN",
-    "MSTR", "CRWD", "SNOW", "RBLX", "DKNG",
-    "MARA", "RIOT", "TQQQ", "SPY", "QQQ"
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "GOOG",
+    "TSLA",
+    "AVGO",
+    "AMD",
+    "NFLX",
+    "INTC",
+    "MU",
+    "QCOM",
+    "AMAT",
+    "ARM",
+    "PLTR",
+    "SMCI",
+    "COIN",
+    "HOOD",
+    "SOFI",
+    "BAC",
+    "JPM",
+    "WMT",
+    "COST",
+    "UBER",
+    "SHOP",
+    "PDD",
+    "NIO",
+    "RIVN",
+    "MSTR",
+    "CRWD",
+    "SNOW",
+    "RBLX",
+    "DKNG",
+    "MARA",
+    "RIOT",
+    "TQQQ",
+    "SPY",
+    "QQQ",
 ]
-
-# ============================================================
-# DEFAULT SETTINGS
-# ============================================================
 
 DEFAULT_SETTINGS = {
     "min_price": 1.0,
@@ -141,18 +146,16 @@ DEFAULT_SETTINGS = {
     "repeat_tolerance": 0.90,
     "refresh_seconds": 60,
     "chart_interval": "1",
-    "auto_scan": True
+    "auto_scan": True,
 }
+
 
 # ============================================================
 # FILE HELPERS
 # ============================================================
-
 def load_json(filename, default):
-
     if not os.path.exists(filename):
         return default.copy() if isinstance(default, dict) else list(default)
-
     try:
         with open(filename, "r") as f:
             return json.load(f)
@@ -161,7 +164,6 @@ def load_json(filename, default):
 
 
 def save_json(filename, data):
-
     try:
         with open(filename, "w") as f:
             json.dump(data, f, indent=2)
@@ -172,18 +174,11 @@ def save_json(filename, data):
 # ============================================================
 # SESSION STATE
 # ============================================================
-
 if "settings" not in st.session_state:
-    st.session_state.settings = load_json(
-        SETTINGS_FILE,
-        DEFAULT_SETTINGS
-    )
+    st.session_state.settings = load_json(SETTINGS_FILE, DEFAULT_SETTINGS)
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_json(
-        WATCHLIST_FILE,
-        []
-    )
+    st.session_state.watchlist = load_json(WATCHLIST_FILE, [])
 
 if "selected_symbol" not in st.session_state:
     st.session_state.selected_symbol = "AAPL"
@@ -197,976 +192,318 @@ if "watchlist_results" not in st.session_state:
 if "volume_history" not in st.session_state:
     st.session_state.volume_history = {}
 
-if "last_scan_time" not in st.session_state:
-    st.session_state.last_scan_time = None
 
 # ============================================================
 # WEBULL CONNECTION
 # ============================================================
-
 @st.cache_resource
 def get_webull_client():
-
     app_key = st.secrets.get("WEBULL_APP_KEY", "")
     app_secret = st.secrets.get("WEBULL_APP_SECRET", "")
-
     if not app_key or not app_secret:
         return None
-
-    api_client = ApiClient(
-        app_key,
-        app_secret,
-        "us"
-    )
-
-    api_client.add_endpoint(
-        "us",
-        "api.webull.com"
-    )
-
+    api_client = ApiClient(app_key, app_secret, "us")
+    api_client.add_endpoint("us", "api.webull.com")
     return DataClient(api_client)
 
 
 webull_client = get_webull_client()
 
 # ============================================================
-# WEBULL STATUS
+# WEBULL HISTORICAL DATA & ANALYSIS
 # ============================================================
-
-if webull_client is None:
-
-    st.warning(
-        "Webull API credentials are not configured. "
-        "Add WEBULL_APP_KEY and WEBULL_APP_SECRET to "
-        ".streamlit/secrets.toml."
-    )
-
-
-# ============================================================
-# WEBULL HISTORICAL DATA
-# ============================================================
-
-def get_history(symbol, timespan=Timespan.M1.name, count=390):
-
+def get_history(symbol, timespan=Timespan.M1.name):
     if webull_client is None:
         return None
-
     try:
-
         response = webull_client.market_data.get_history_bar(
-            symbol,
-            Category.US_STOCK.name,
-            timespan
+            symbol, Category.US_STOCK.name, timespan
         )
-
         if response.status_code != 200:
             return None
-
         data = response.json()
-
         if isinstance(data, dict):
-
-            # Webull may wrap bars in a data/list field
-            if "data" in data:
-                data = data["data"]
-
-            elif "items" in data:
-                data = data["items"]
-
+            data = data.get("data", data.get("items", []))
         if not isinstance(data, list):
             return None
-
         df = pd.DataFrame(data)
-
-        if df.empty:
-            return None
-
-        return normalize_bars(df)
-
+        return normalize_bars(df) if not df.empty else None
     except Exception:
         return None
 
 
-# ============================================================
-# NORMALIZE WEBULL BARS
-# ============================================================
-
 def normalize_bars(df):
-
     rename_map = {}
-
     possible_columns = {
         "open": ["open", "open_price"],
         "high": ["high", "high_price"],
         "low": ["low", "low_price"],
         "close": ["close", "close_price"],
         "volume": ["volume", "vol"],
-        "timestamp": [
-            "timestamp",
-            "time",
-            "trade_time",
-            "datetime"
-        ]
     }
-
     for target, possibilities in possible_columns.items():
-
         for col in possibilities:
-
             if col in df.columns:
                 rename_map[col] = target
                 break
-
     df = df.rename(columns=rename_map)
-
-    required = ["close", "volume"]
-
-    for col in required:
-
-        if col not in df.columns:
-            return pd.DataFrame()
-
-    for col in ["open", "high", "low", "close", "volume"]:
-
+    for col in ["close", "volume"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col],
-                errors="coerce"
-            )
-
-    if "timestamp" in df.columns:
-
-        try:
-            df["timestamp"] = pd.to_datetime(
-                df["timestamp"],
-                errors="coerce",
-                utc=True
-            )
-        except Exception:
-            pass
-
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     return df.dropna(subset=["close", "volume"])
 
 
-# ============================================================
-# GET CURRENT MARKET SNAPSHOT
-# ============================================================
-
-def get_snapshot(symbols):
-
-    """
-    Uses Webull historical 1-minute data to obtain the
-    latest available bar.
-
-    This function is deliberately isolated so that we can
-    later replace it with Webull batch snapshot calls
-    without changing the scanner UI.
-    """
-
-    results = []
-
-    for symbol in symbols:
-
-        df = get_history(
-            symbol,
-            Timespan.M1.name
-        )
-
-        if df is None or df.empty:
-            continue
-
-        latest = df.iloc[-1]
-
-        price = float(latest["close"])
-        volume = float(latest["volume"])
-
-        results.append({
-            "symbol": symbol,
-            "price": price,
-            "volume": volume
-        })
-
-    return pd.DataFrame(results)
-
-
-# ============================================================
-# DAILY DATA
-# ============================================================
-
-def get_daily_data(symbol):
-
-    df = get_history(
-        symbol,
-        Timespan.D1.name
-    )
-
-    if df is None or df.empty:
-        return None
-
-    return df
-
-
-# ============================================================
-# CALCULATE RVOL
-# ============================================================
-
-def calculate_rvol(symbol, intraday_df):
-
-    if intraday_df is None or intraday_df.empty:
-        return 0.0
-
-    today_volume = float(
-        intraday_df["volume"].sum()
-    )
-
-    daily_df = get_daily_data(symbol)
-
-    if daily_df is None or daily_df.empty:
-        return 0.0
-
-    daily_volumes = pd.to_numeric(
-        daily_df["volume"],
-        errors="coerce"
-    ).dropna()
-
-    if len(daily_volumes) < 5:
-        return 0.0
-
-    average_volume = float(
-        daily_volumes.tail(20).mean()
-    )
-
-    if average_volume <= 0:
-        return 0.0
-
-    return today_volume / average_volume
-
-
-# ============================================================
-# CALCULATE PRICE CHANGE
-# ============================================================
-
-def calculate_change(symbol, current_price):
-
-    daily_df = get_daily_data(symbol)
-
-    if daily_df is None or daily_df.empty:
-        return 0.0
-
-    if len(daily_df) < 2:
-        return 0.0
-
-    previous_close = float(
-        daily_df.iloc[-2]["close"]
-    )
-
-    if previous_close <= 0:
-        return 0.0
-
-    return (
-        (current_price - previous_close)
-        / previous_close
-    ) * 100.0
-
-
-# ============================================================
-# REPEAT VOLUME
-# ============================================================
-
-def calculate_repeat_volume(
-    symbol,
-    current_volume,
-    tolerance
-):
-
-    previous = st.session_state.volume_history.get(
-        symbol
-    )
-
-    result = False
-
-    if previous is not None and previous > 0:
-
-        ratio = current_volume / previous
-
-        if ratio >= tolerance:
-            result = True
-
-    st.session_state.volume_history[symbol] = current_volume
-
-    return result
-
-
-# ============================================================
-# SCAN ONE STOCK
-# ============================================================
-
 def analyze_stock(symbol):
-
-    intraday = get_history(
-        symbol,
-        Timespan.M1.name
-    )
-
+    intraday = get_history(symbol, Timespan.M1.name)
     if intraday is None or intraday.empty:
         return None
 
-    latest = intraday.iloc[-1]
+    price = float(intraday.iloc[-1]["close"])
+    current_volume = float(intraday["volume"].sum())
 
-    price = float(latest["close"])
+    daily_df = get_history(symbol, Timespan.D1.name)
+    rvol, change = 0.0, 0.0
 
-    # IMPORTANT:
-    # Webull minute-bar volume may represent the volume
-    # associated with the returned bar. We therefore use
-    # cumulative intraday volume where available.
+    if daily_df is not None and not daily_df.empty and len(daily_df) >= 5:
+        avg_vol = float(daily_df["volume"].tail(20).mean())
+        if avg_vol > 0:
+            rvol = current_volume / avg_vol
 
-    current_volume = float(
-        intraday["volume"].sum()
+        prev_close = float(daily_df.iloc[-2]["close"])
+        if prev_close > 0:
+            change = ((price - prev_close) / prev_close) * 100.0
+
+    previous = st.session_state.volume_history.get(symbol)
+    repeat = (
+        True
+        if previous
+        and (
+            current_volume / previous
+            >= st.session_state.settings["repeat_tolerance"]
+        )
+        else False
     )
-
-    rvol = calculate_rvol(
-        symbol,
-        intraday
-    )
-
-    change = calculate_change(
-        symbol,
-        price
-    )
-
-    dollar_volume = (
-        price * current_volume
-    )
-
-    repeat = calculate_repeat_volume(
-        symbol,
-        current_volume,
-        st.session_state.settings[
-            "repeat_tolerance"
-        ]
-    )
+    st.session_state.volume_history[symbol] = current_volume
 
     return {
-        "Time": datetime.now(NY).strftime(
-            "%H:%M:%S"
-        ),
+        "Time": datetime.now(NY).strftime("%H:%M:%S"),
         "Symbol": symbol,
         "Price": price,
         "Change %": change,
         "RVOL": rvol,
         "Volume": int(current_volume),
-        "Dollar Volume": dollar_volume,
-        "Repeat": repeat
+        "Dollar Volume": price * current_volume,
+        "Repeat": repeat,
     }
 
 
-# ============================================================
-# REGULAR SCAN
-# ============================================================
-
 def run_regular_scan():
-
     settings = st.session_state.settings
-
     rows = []
-
-    symbols = DEFAULT_SYMBOLS.copy()
-
-    for symbol in symbols:
-
-        try:
-
-            result = analyze_stock(symbol)
-
-            if result is None:
-                continue
-
-            if result["Price"] < settings["min_price"]:
-                continue
-
-            if result["Price"] > settings["max_price"]:
-                continue
-
-            if result["Volume"] < settings["min_volume"]:
-                continue
-
-            if result["RVOL"] < settings["min_rvol"]:
-                continue
-
-            if result["Change %"] < settings["min_change"]:
-                continue
-
+    for symbol in DEFAULT_SYMBOLS:
+        res = analyze_stock(symbol)
+        if res and (
+            settings["min_price"] <= res["Price"] <= settings["max_price"]
+        ):
             if (
-                result["Dollar Volume"]
-                < settings["min_dollar_volume"]
+                res["Volume"] >= settings["min_volume"]
+                and res["RVOL"] >= settings["min_rvol"]
             ):
-                continue
-
-            rows.append(result)
-
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-
-    df = df.sort_values(
-        ["RVOL", "Change %"],
-        ascending=False
+                if (
+                    res["Change %"] >= settings["min_change"]
+                    and res["Dollar Volume"] >= settings["min_dollar_volume"]
+                ):
+                    rows.append(res)
+    return (
+        pd.DataFrame(rows).sort_values(by="RVOL", ascending=False)
+        if rows
+        else pd.DataFrame()
     )
 
-    return df.reset_index(drop=True)
-
-
-# ============================================================
-# WATCHLIST SCAN
-# ============================================================
 
 def run_watchlist_scan():
-
     rows = []
-
     for symbol in st.session_state.watchlist:
-
-        try:
-
-            result = analyze_stock(symbol)
-
-            if result is None:
-                continue
-
-            rows.append(result)
-
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-
-    df = df.sort_values(
-        ["Repeat", "RVOL"],
-        ascending=False
+        res = analyze_stock(symbol)
+        if res:
+            rows.append(res)
+    return (
+        pd.DataFrame(rows).sort_values(by="RVOL", ascending=False)
+        if rows
+        else pd.DataFrame()
     )
 
-    return df.reset_index(drop=True)
-
 
 # ============================================================
-# TRADINGVIEW CHART
+# TRADINGVIEW CHART COMPONENT
 # ============================================================
-
 def show_chart(symbol):
-
-    interval = st.session_state.settings[
-        "chart_interval"
-    ]
-
-    if not symbol:
-        symbol = "AAPL"
-
+    interval = st.session_state.settings["chart_interval"]
     chart_url = (
-        "https://www.tradingview.com/widgetembed/"
-        "?frameElementId=tradingview_chart"
-        f"&symbol={symbol}"
-        "&interval=" + str(interval) +
-        "&hidetoptoolbar=0"
-        "&symboledit=1"
-        "&saveimage=0"
-        "&toolbarbg=f1f3f6"
-        "&studies=[]"
-        "&theme=dark"
-        "&style=1"
-        "&timezone=America%2FNew_York"
-        "&withdateranges=1"
-        "&hideideas=1"
-        "&hide_side_toolbar=0"
+        f"https://www.tradingview.com/widgetembed/?symbol={symbol or 'AAPL'}"
+        f"&interval={interval}&hidetoptoolbar=0&symboledit=1&saveimage=0"
+        "&toolbarbg=f1f3f6&theme=dark&style=1&timezone=America%2FNew_York"
     )
-
-    st.components.v1.iframe(
-        chart_url,
-        height=700,
-        scrolling=False
-    )
+    # Scaled height fits nicely within full screen limits without page overflow
+    st.components.v1.iframe(chart_url, height=880, scrolling=False)
 
 
 # ============================================================
-# STOCK BUTTONS
+# LAYOUT STRUCTURE
 # ============================================================
-
-def stock_button(symbol):
-
-    if st.button(
-        symbol,
-        key=f"stock_{symbol}",
-        use_container_width=True
-    ):
-
-        st.session_state.selected_symbol = symbol
-        st.rerun()
-
-
-# ============================================================
-# FILTER PANEL
-# ============================================================
-
-def filters():
-
-    s = st.session_state.settings
-
-    st.markdown(
-        '<div class="tab-note">Scanner filters</div>',
-        unsafe_allow_html=True
-    )
-
-    s["min_price"] = st.number_input(
-        "Minimum price",
-        min_value=0.0,
-        value=float(s["min_price"]),
-        step=0.10
-    )
-
-    s["max_price"] = st.number_input(
-        "Maximum price",
-        min_value=0.0,
-        value=float(s["max_price"]),
-        step=1.0
-    )
-
-    s["min_volume"] = st.number_input(
-        "Minimum volume",
-        min_value=0,
-        value=int(s["min_volume"]),
-        step=10000
-    )
-
-    s["min_rvol"] = st.number_input(
-        "Minimum RVOL",
-        min_value=0.0,
-        value=float(s["min_rvol"]),
-        step=0.1
-    )
-
-    s["min_change"] = st.number_input(
-        "Minimum % change",
-        min_value=-100.0,
-        value=float(s["min_change"]),
-        step=0.1
-    )
-
-    s["min_dollar_volume"] = st.number_input(
-        "Minimum dollar volume",
-        min_value=0,
-        value=int(s["min_dollar_volume"]),
-        step=100000
-    )
-
-    s["repeat_tolerance"] = st.slider(
-        "Repeat volume tolerance",
-        min_value=0.50,
-        max_value=1.50,
-        value=float(s["repeat_tolerance"]),
-        step=0.01
-    )
-
-    s["refresh_seconds"] = st.number_input(
-        "Refresh seconds",
-        min_value=5,
-        max_value=3600,
-        value=int(s["refresh_seconds"]),
-        step=5
-    )
-
-    s["chart_interval"] = st.selectbox(
-        "Chart timeframe",
-        ["1", "3", "5", "15", "30", "60"],
-        index=[
-            "1", "3", "5", "15", "30", "60"
-        ].index(
-            str(s["chart_interval"])
-        )
-    )
-
-    s["auto_scan"] = st.checkbox(
-        "Auto scan",
-        value=bool(s["auto_scan"])
-    )
-
-    if st.button(
-        "Save Filters",
-        use_container_width=True
-    ):
-
-        save_json(
-            SETTINGS_FILE,
-            s
-        )
-
-        st.success("Saved")
-
-
-# ============================================================
-# WATCHLIST TAB
-# ============================================================
-
-def watchlist_tab():
-
-    st.markdown(
-        "### WATCHLIST"
-    )
-
-    st.caption(
-        "Add stocks here. They will be used by "
-        "WATCHLIST STOCK SCAN."
-    )
-
-    add_symbol = st.text_input(
-        "Add symbol",
-        placeholder="Example: NVDA"
-    )
-
-    if st.button(
-        "Add to Watchlist",
-        use_container_width=True
-    ):
-
-        symbol = add_symbol.strip().upper()
-
-        if symbol:
-
-            if symbol not in st.session_state.watchlist:
-
-                st.session_state.watchlist.append(
-                    symbol
-                )
-
-                save_json(
-                    WATCHLIST_FILE,
-                    st.session_state.watchlist
-                )
-
-                st.session_state.selected_symbol = symbol
-
-                st.rerun()
-
-    st.divider()
-
-    if not st.session_state.watchlist:
-
-        st.info(
-            "Your watchlist is empty."
-        )
-
-        return
-
-    for symbol in st.session_state.watchlist:
-
-        c1, c2 = st.columns(
-            [3, 1],
-            gap="small"
-        )
-
-        with c1:
-
-            if st.button(
-                symbol,
-                key=f"wl_{symbol}",
-                use_container_width=True
-            ):
-
-                st.session_state.selected_symbol = symbol
-                st.rerun()
-
-        with c2:
-
-            if st.button(
-                "×",
-                key=f"remove_{symbol}"
-            ):
-
-                st.session_state.watchlist.remove(
-                    symbol
-                )
-
-                save_json(
-                    WATCHLIST_FILE,
-                    st.session_state.watchlist
-                )
-
-                st.rerun()
-
-
-# ============================================================
-# REGULAR SCAN TAB
-# ============================================================
-
-def regular_scan_tab():
-
-    st.markdown(
-        "### REGULAR SCAN"
-    )
-
-    filters()
-
-    st.divider()
-
-    if st.button(
-        "SCAN NOW",
-        use_container_width=True
-    ):
-
-        with st.spinner(
-            "Scanning US stocks..."
-        ):
-
-            st.session_state.regular_results = (
-                run_regular_scan()
-            )
-
-            st.session_state.last_scan_time = (
-                datetime.now(NY)
-            )
-
-    df = st.session_state.regular_results
-
-    if df.empty:
-
-        st.info(
-            "No results yet. Press SCAN NOW."
-        )
-
-        return
-
-    st.caption(
-        f"{len(df)} stocks found"
-    )
-
-    for _, row in df.iterrows():
-
-        symbol = row["Symbol"]
-
-        c1, c2, c3 = st.columns(
-            [1.7, 1.1, 1.0],
-            gap="small"
-        )
-
-        with c1:
-
-            if st.button(
-                symbol,
-                key=f"regular_{symbol}",
-                use_container_width=True
-            ):
-
-                st.session_state.selected_symbol = symbol
-                st.rerun()
-
-        with c2:
-
-            change = row["Change %"]
-
-            st.markdown(
-                f"**{change:+.2f}%**"
-            )
-
-        with c3:
-
-            st.markdown(
-                f"RVOL **{row['RVOL']:.2f}**"
-            )
-
-        st.caption(
-            f"Vol {row['Volume']:,}  |  "
-            f"${row['Dollar Volume']:,.0f}"
-        )
-
-
-# ============================================================
-# WATCHLIST STOCK SCAN TAB
-# ============================================================
-
-def watchlist_stock_scan_tab():
-
-    st.markdown(
-        "### WATCHLIST STOCK SCAN"
-    )
-
-    st.caption(
-        "Only stocks in your Watchlist are scanned here."
-    )
-
-    if not st.session_state.watchlist:
-
-        st.warning(
-            "Add stocks to WATCHLIST first."
-        )
-
-        return
-
-    if st.button(
-        "SCAN WATCHLIST",
-        use_container_width=True
-    ):
-
-        with st.spinner(
-            "Scanning Watchlist..."
-        ):
-
-            st.session_state.watchlist_results = (
-                run_watchlist_scan()
-            )
-
-    df = st.session_state.watchlist_results
-
-    if df.empty:
-
-        st.info(
-            "No watchlist results yet."
-        )
-
-        return
-
-    for _, row in df.iterrows():
-
-        symbol = row["Symbol"]
-
-        repeat = row["Repeat"]
-
-        c1, c2, c3, c4 = st.columns(
-            [1.4, 1.0, 1.0, 0.7],
-            gap="small"
-        )
-
-        with c1:
-
-            if st.button(
-                symbol,
-                key=f"watchscan_{symbol}",
-                use_container_width=True
-            ):
-
-                st.session_state.selected_symbol = symbol
-                st.rerun()
-
-        with c2:
-
-            st.markdown(
-                f"{row['Change %']:+.2f}%"
-            )
-
-        with c3:
-
-            st.markdown(
-                f"RVOL {row['RVOL']:.2f}"
-            )
-
-        with c4:
-
-            if repeat:
-
-                st.markdown(
-                    '<span class="green">■</span>',
-                    unsafe_allow_html=True
-                )
-
-            else:
-
-                st.markdown(
-                    '<span style="color:#555">■</span>',
-                    unsafe_allow_html=True
-                )
-
-        st.caption(
-            f"Volume: {row['Volume']:,}"
-        )
-
-
-# ============================================================
-# MAIN LAYOUT
-# ============================================================
-
-left, right = st.columns(
-    [35, 65],
-    gap="small"
-)
-
-# ============================================================
-# LEFT PANEL
-# ============================================================
+left, right = st.columns([32, 68], gap="small")
 
 with left:
-
     st.markdown(
-        '<div class="scanner-title">'
-        'US STOCK SCANNER'
-        '</div>',
-        unsafe_allow_html=True
+        '<div class="scanner-title">US STOCK SCANNER</div>',
+        unsafe_allow_html=True,
     )
 
-    # --------------------------------------------------------
-    # THESE ARE THE THREE ACTUAL TOP TABS
-    # --------------------------------------------------------
+    if webull_client is None:
+        st.warning("Configure WEBULL_APP_KEY / WEBULL_APP_SECRET.")
 
     tab1, tab2, tab3 = st.tabs(
-        [
-            "WATCHLIST",
-            "REGULAR SCAN",
-            "WATCHLIST STOCK SCAN"
-        ]
+        ["WATCHLIST", "REGULAR SCAN", "WATCHLIST SCAN"]
     )
 
+    # ------------------ TAB 1: WATCHLIST ------------------
     with tab1:
+        c_add1, c_add2 = st.columns([2.5, 1], gap="small")
+        with c_add1:
+            add_symbol = st.text_input(
+                "Add Symbol",
+                placeholder="e.g. NVDA",
+                label_visibility="collapsed",
+            ).upper()
+        with c_add2:
+            if st.button("Add", use_container_width=True) and add_symbol:
+                if add_symbol not in st.session_state.watchlist:
+                    st.session_state.watchlist.append(add_symbol)
+                    save_json(WATCHLIST_FILE, st.session_state.watchlist)
+                    st.session_state.selected_symbol = add_symbol
+                    st.rerun()
 
-        watchlist_tab()
+        if not st.session_state.watchlist:
+            st.info("Watchlist empty.")
+        else:
+            for symbol in st.session_state.watchlist:
+                c1, c2 = st.columns([3, 1], gap="small")
+                with c1:
+                    if st.button(
+                        symbol, key=f"wl_{symbol}", use_container_width=True
+                    ):
+                        st.session_state.selected_symbol = symbol
+                        st.rerun()
+                with c2:
+                    if st.button("×", key=f"rem_{symbol}"):
+                        st.session_state.watchlist.remove(symbol)
+                        save_json(WATCHLIST_FILE, st.session_state.watchlist)
+                        st.rerun()
 
+    # ------------------ TAB 2: REGULAR SCAN ------------------
     with tab2:
+        s = st.session_state.settings
+        with st.expander("⚙️ Settings", expanded=False):
+            s["min_price"] = st.number_input(
+                "Min Price ($)", value=float(s["min_price"])
+            )
+            s["max_price"] = st.number_input(
+                "Max Price ($)", value=float(s["max_price"])
+            )
+            s["min_volume"] = st.number_input(
+                "Min Volume", value=int(s["min_volume"])
+            )
+            s["min_rvol"] = st.number_input(
+                "Min RVOL", value=float(s["min_rvol"])
+            )
+            s["min_change"] = st.number_input(
+                "Min Change %", value=float(s["min_change"])
+            )
+            s["chart_interval"] = st.selectbox(
+                "Timeframe",
+                ["1", "3", "5", "15", "60"],
+                index=["1", "3", "5", "15", "60"].index(
+                    str(s["chart_interval"])
+                ),
+            )
+            s["auto_scan"] = st.checkbox("Auto Scan", value=s["auto_scan"])
+            if st.button("Save Settings", use_container_width=True):
+                save_json(SETTINGS_FILE, s)
+                st.success("Saved.")
 
-        regular_scan_tab()
+        if st.button("🚀 SCAN MARKET NOW", use_container_width=True):
+            with st.spinner("Scanning..."):
+                st.session_state.regular_results = run_regular_scan()
 
+        df = st.session_state.regular_results
+        if df.empty:
+            st.info("No active market results.")
+        else:
+            for _, row in df.iterrows():
+                sym = row["Symbol"]
+                c1, c2, c3 = st.columns([1.5, 1.0, 1.0], gap="small")
+                with c1:
+                    if st.button(
+                        sym, key=f"reg_{sym}", use_container_width=True
+                    ):
+                        st.session_state.selected_symbol = sym
+                        st.rerun()
+                with c2:
+                    st.markdown(f"**{row['Change %']:+.2f}%**")
+                with c3:
+                    st.markdown(f"RVOL **{row['RVOL']:.2f}**")
+
+    # ------------------ TAB 3: WATCHLIST STOCK SCAN ------------------
     with tab3:
+        if not st.session_state.watchlist:
+            st.warning("Add tickers in WATCHLIST tab.")
+        else:
+            if st.button("🔍 SCAN WATCHLIST", use_container_width=True):
+                with st.spinner("Scanning..."):
+                    st.session_state.watchlist_results = run_watchlist_scan()
 
-        watchlist_stock_scan_tab()
-
-
-# ============================================================
-# RIGHT PANEL
-# ============================================================
+            df_wl = st.session_state.watchlist_results
+            if df_wl.empty:
+                st.info("No scan results yet.")
+            else:
+                for _, row in df_wl.iterrows():
+                    sym = row["Symbol"]
+                    c1, c2, c3, c4 = st.columns(
+                        [1.4, 1.0, 1.0, 0.6], gap="small"
+                    )
+                    with c1:
+                        if st.button(
+                            sym, key=f"wls_{sym}", use_container_width=True
+                        ):
+                            st.session_state.selected_symbol = sym
+                            st.rerun()
+                    with c2:
+                        st.markdown(f"{row['Change %']:+.2f}%")
+                    with c3:
+                        st.markdown(f"RVOL {row['RVOL']:.2f}")
+                    with c4:
+                        repeat_color = (
+                            '<span class="green">■</span>'
+                            if row["Repeat"]
+                            else '<span style="color:#555">■</span>'
+                        )
+                        st.markdown(repeat_color, unsafe_allow_html=True)
 
 with right:
-
-    symbol = st.session_state.selected_symbol
-
-    st.markdown(
-        f"### {symbol}"
-    )
-
-    show_chart(symbol)
-
+    show_chart(st.session_state.selected_symbol)
 
 # ============================================================
-# AUTO SCAN
+# AUTOREFRESH ENGINE
 # ============================================================
-
-if st.session_state.settings["auto_scan"]:
-
+if st.session_state.settings.get("auto_scan", False):
     try:
-
-        from streamlit_autorefresh import (
-            st_autorefresh
-        )
+        from streamlit_autorefresh import st_autorefresh
 
         st_autorefresh(
             interval=int(
-                st.session_state.settings[
-                    "refresh_seconds"
-                ] * 1000
+                st.session_state.settings.get("refresh_seconds", 60) * 1000
             ),
-            key="scanner_refresh"
+            key="scanner_autorefresh",
         )
-
     except ImportError:
-
         pass
