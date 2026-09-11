@@ -43,17 +43,8 @@ div[data-testid="column"] {
     padding-right: 3px;
 }
 
-.stock-row {
-    font-size: 12px;
-}
-
 button {
     font-size: 12px !important;
-}
-
-.watchlist-count {
-    font-size: 11px;
-    opacity: 0.7;
 }
 
 </style>
@@ -129,23 +120,23 @@ settings = load_settings()
 if "selected_symbol" not in st.session_state:
     st.session_state.selected_symbol = "AAPL"
 
-if "previous_volumes" not in st.session_state:
-    st.session_state.previous_volumes = {}
-
-if "volume_history" not in st.session_state:
-    st.session_state.volume_history = {}
+if "active_view" not in st.session_state:
+    st.session_state.active_view = "Regular Scan"
 
 if "scan_results" not in st.session_state:
     st.session_state.scan_results = pd.DataFrame()
 
-if "repeat_results" not in st.session_state:
-    st.session_state.repeat_results = pd.DataFrame()
-
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
-if "active_view" not in st.session_state:
-    st.session_state.active_view = "Scanner"
+if "watchlist_results" not in st.session_state:
+    st.session_state.watchlist_results = pd.DataFrame()
+
+if "repeat_results" not in st.session_state:
+    st.session_state.repeat_results = pd.DataFrame()
+
+if "volume_history" not in st.session_state:
+    st.session_state.volume_history = {}
 
 
 # =========================================================
@@ -168,7 +159,7 @@ def market_open():
 
 
 # =========================================================
-# GET INTRADAY DATA
+# INTRADAY DATA
 # =========================================================
 
 def get_intraday(symbol):
@@ -198,7 +189,7 @@ def get_intraday(symbol):
 
 
 # =========================================================
-# GET DAILY DATA
+# DAILY DATA
 # =========================================================
 
 def get_daily(symbol):
@@ -227,230 +218,261 @@ def get_daily(symbol):
 
 
 # =========================================================
-# FORMAT DOLLAR VOLUME
+# DOLLAR VOLUME FORMAT
 # =========================================================
 
-def format_dollar_volume(dollar):
+def format_dollar_volume(value):
 
-    if dollar >= 1_000_000_000:
-        return f"${dollar / 1_000_000_000:.1f}B"
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.1f}B"
 
-    elif dollar >= 1_000_000:
-        return f"${dollar / 1_000_000:.1f}M"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
 
-    else:
-        return f"${dollar / 1_000:.0f}K"
+    return f"${value / 1_000:.0f}K"
 
 
 # =========================================================
-# REPEAT VOLUME
-# =========================================================
-#
-# This keeps a history of scan volumes for every symbol.
-#
-# A repeat signal is generated when the current volume
-# reaches at least the selected percentage of a previous
-# recorded volume.
-#
-# Example:
-#
-# previous volume = 2,000,000
-# tolerance       = 0.90
-# current volume  = 1,900,000
-#
-# 1,900,000 / 2,000,000 = 0.95
-#
-# Therefore repeat = True
+# RECORD VOLUME
 # =========================================================
 
-def update_volume_history(symbol, current_volume):
+def record_volume(symbol, volume):
 
-    if current_volume <= 0:
-        return False
+    if volume <= 0:
+        return
 
-    history = st.session_state.volume_history.get(symbol, [])
+    history = st.session_state.volume_history.get(
+        symbol,
+        []
+    )
 
-    repeat = False
+    history.append(float(volume))
 
-    tolerance = float(settings["repeat_tolerance"])
-
-    # Compare current volume with previous meaningful
-    # volume observations.
-    if history:
-
-        for previous_volume in history:
-
-            if previous_volume <= 0:
-                continue
-
-            ratio = current_volume / previous_volume
-
-            if ratio >= tolerance:
-                repeat = True
-                break
-
-    # Keep only recent history.
-    history.append(float(current_volume))
-
+    # Keep the last 20 observations
     if len(history) > 20:
         history = history[-20:]
 
     st.session_state.volume_history[symbol] = history
 
-    st.session_state.previous_volumes[symbol] = current_volume
 
-    return repeat
+# =========================================================
+# REPEAT CHECK
+# =========================================================
+
+def check_repeat(symbol, current_volume):
+
+    history = st.session_state.volume_history.get(
+        symbol,
+        []
+    )
+
+    if not history:
+        return False, None, 0
+
+    tolerance = float(
+        settings["repeat_tolerance"]
+    )
+
+    best_previous = None
+    best_ratio = 0
+
+    for previous_volume in history:
+
+        if previous_volume <= 0:
+            continue
+
+        ratio = current_volume / previous_volume
+
+        if ratio >= tolerance and ratio > best_ratio:
+
+            best_ratio = ratio
+            best_previous = previous_volume
+
+    return (
+        best_previous is not None,
+        best_previous,
+        best_ratio
+    )
 
 
 # =========================================================
-# NORMAL SCANNER
+# GET STOCK DATA
 # =========================================================
 
-def scan_symbols(symbols):
+def get_stock_data(symbol):
+
+    try:
+
+        intraday = get_intraday(symbol)
+
+        if intraday is None or intraday.empty:
+            return None
+
+        daily = get_daily(symbol)
+
+        if daily is None or daily.empty:
+            return None
+
+        # -------------------------------------------------
+        # PRICE
+        # -------------------------------------------------
+
+        price = float(
+            intraday["Close"].iloc[-1]
+        )
+
+        # -------------------------------------------------
+        # VOLUME
+        # -------------------------------------------------
+
+        volume = float(
+            intraday["Volume"]
+            .fillna(0)
+            .sum()
+        )
+
+        # -------------------------------------------------
+        # PREVIOUS CLOSE
+        # -------------------------------------------------
+
+        if len(daily) >= 2:
+
+            previous_close = float(
+                daily["Close"].iloc[-2]
+            )
+
+        else:
+
+            previous_close = price
+
+        # -------------------------------------------------
+        # CHANGE
+        # -------------------------------------------------
+
+        if previous_close > 0:
+
+            change = (
+                (price - previous_close)
+                / previous_close
+                * 100
+            )
+
+        else:
+
+            change = 0
+
+        # -------------------------------------------------
+        # AVERAGE VOLUME
+        # -------------------------------------------------
+
+        if len(daily) >= 6:
+
+            avg_volume = float(
+                daily["Volume"]
+                .iloc[-6:-1]
+                .mean()
+            )
+
+        else:
+
+            avg_volume = float(
+                daily["Volume"].mean()
+            )
+
+        # -------------------------------------------------
+        # RVOL
+        # -------------------------------------------------
+
+        if avg_volume > 0:
+
+            rvol = volume / avg_volume
+
+        else:
+
+            rvol = 0
+
+        # -------------------------------------------------
+        # DOLLAR VOLUME
+        # -------------------------------------------------
+
+        dollar_volume = price * volume
+
+        return {
+            "Symbol": symbol,
+            "Price": price,
+            "Change": change,
+            "RVOL": rvol,
+            "Volume": volume,
+            "Dollar": dollar_volume
+        }
+
+    except Exception:
+
+        return None
+
+
+# =========================================================
+# APPLY NORMAL FILTERS
+# =========================================================
+
+def passes_filters(data):
+
+    if data is None:
+        return False
+
+    if data["Price"] < settings["min_price"]:
+        return False
+
+    if data["Price"] > settings["max_price"]:
+        return False
+
+    if data["Volume"] < settings["min_volume"]:
+        return False
+
+    if data["RVOL"] < settings["min_rvol"]:
+        return False
+
+    if data["Change"] < settings["min_change"]:
+        return False
+
+    if data["Dollar"] < settings["min_dollar_volume"]:
+        return False
+
+    return True
+
+
+# =========================================================
+# REGULAR MARKET SCAN
+# =========================================================
+
+def regular_scan():
 
     results = []
 
-    for symbol in symbols:
+    for symbol in STOCKS:
 
-        try:
+        data = get_stock_data(symbol)
 
-            intraday = get_intraday(symbol)
-
-            if intraday is None or intraday.empty:
-                continue
-
-            daily = get_daily(symbol)
-
-            if daily is None or daily.empty:
-                continue
-
-            # ---------------------------------------------
-            # PRICE
-            # ---------------------------------------------
-
-            price = float(
-                intraday["Close"].iloc[-1]
-            )
-
-            # ---------------------------------------------
-            # VOLUME
-            # ---------------------------------------------
-
-            volume = float(
-                intraday["Volume"]
-                .fillna(0)
-                .sum()
-            )
-
-            # ---------------------------------------------
-            # PREVIOUS CLOSE
-            # ---------------------------------------------
-
-            if len(daily) >= 2:
-
-                previous_close = float(
-                    daily["Close"].iloc[-2]
-                )
-
-            else:
-
-                previous_close = price
-
-            # ---------------------------------------------
-            # CHANGE
-            # ---------------------------------------------
-
-            if previous_close > 0:
-
-                change = (
-                    (price - previous_close)
-                    / previous_close
-                    * 100
-                )
-
-            else:
-
-                change = 0
-
-            # ---------------------------------------------
-            # AVERAGE VOLUME
-            # ---------------------------------------------
-
-            if len(daily) >= 6:
-
-                avg_volume = float(
-                    daily["Volume"]
-                    .iloc[-6:-1]
-                    .mean()
-                )
-
-            else:
-
-                avg_volume = float(
-                    daily["Volume"].mean()
-                )
-
-            # ---------------------------------------------
-            # RVOL
-            # ---------------------------------------------
-
-            if avg_volume > 0:
-
-                rvol = volume / avg_volume
-
-            else:
-
-                rvol = 0
-
-            # ---------------------------------------------
-            # DOLLAR VOLUME
-            # ---------------------------------------------
-
-            dollar_volume = price * volume
-
-            # ---------------------------------------------
-            # REPEAT
-            # ---------------------------------------------
-
-            repeat = update_volume_history(
-                symbol,
-                volume
-            )
-
-            # ---------------------------------------------
-            # FILTERS
-            # ---------------------------------------------
-
-            if price < settings["min_price"]:
-                continue
-
-            if price > settings["max_price"]:
-                continue
-
-            if volume < settings["min_volume"]:
-                continue
-
-            if rvol < settings["min_rvol"]:
-                continue
-
-            if change < settings["min_change"]:
-                continue
-
-            if dollar_volume < settings["min_dollar_volume"]:
-                continue
-
-            results.append({
-                "Symbol": symbol,
-                "Price": price,
-                "Change": change,
-                "RVOL": rvol,
-                "Volume": volume,
-                "Dollar": dollar_volume,
-                "Repeat": repeat
-            })
-
-        except Exception:
+        if data is None:
             continue
+
+        # Record volume for future repeat detection
+        record_volume(
+            symbol,
+            data["Volume"]
+        )
+
+        if not passes_filters(data):
+            continue
+
+        repeat, previous_volume, ratio = check_repeat(
+            symbol,
+            data["Volume"]
+        )
+
+        data["Repeat"] = repeat
+
+        results.append(data)
 
     if not results:
         return pd.DataFrame()
@@ -466,196 +488,90 @@ def scan_symbols(symbols):
 
 
 # =========================================================
-# NORMAL SCAN
+# WATCHLIST DISPLAY SCAN
 # =========================================================
 
-def scan_stocks():
-
-    return scan_symbols(STOCKS)
-
-
-# =========================================================
-# WATCHLIST REPEAT SCAN
-# =========================================================
-
-def scan_watchlist_repeat():
-
-    if not st.session_state.watchlist:
-
-        return pd.DataFrame()
+def scan_watchlist_display():
 
     results = []
 
     for symbol in st.session_state.watchlist:
 
-        try:
+        data = get_stock_data(symbol)
 
-            intraday = get_intraday(symbol)
-
-            if intraday is None or intraday.empty:
-                continue
-
-            daily = get_daily(symbol)
-
-            if daily is None or daily.empty:
-                continue
-
-            # ---------------------------------------------
-            # PRICE
-            # ---------------------------------------------
-
-            price = float(
-                intraday["Close"].iloc[-1]
-            )
-
-            # ---------------------------------------------
-            # CURRENT TOTAL VOLUME
-            # ---------------------------------------------
-
-            volume = float(
-                intraday["Volume"]
-                .fillna(0)
-                .sum()
-            )
-
-            # ---------------------------------------------
-            # PREVIOUS CLOSE
-            # ---------------------------------------------
-
-            if len(daily) >= 2:
-
-                previous_close = float(
-                    daily["Close"].iloc[-2]
-                )
-
-            else:
-
-                previous_close = price
-
-            # ---------------------------------------------
-            # CHANGE
-            # ---------------------------------------------
-
-            if previous_close > 0:
-
-                change = (
-                    (price - previous_close)
-                    / previous_close
-                    * 100
-                )
-
-            else:
-
-                change = 0
-
-            # ---------------------------------------------
-            # DAILY AVERAGE VOLUME
-            # ---------------------------------------------
-
-            if len(daily) >= 6:
-
-                avg_volume = float(
-                    daily["Volume"]
-                    .iloc[-6:-1]
-                    .mean()
-                )
-
-            else:
-
-                avg_volume = float(
-                    daily["Volume"].mean()
-                )
-
-            # ---------------------------------------------
-            # RVOL
-            # ---------------------------------------------
-
-            if avg_volume > 0:
-
-                rvol = volume / avg_volume
-
-            else:
-
-                rvol = 0
-
-            # ---------------------------------------------
-            # DOLLAR VOLUME
-            # ---------------------------------------------
-
-            dollar_volume = price * volume
-
-            # ---------------------------------------------
-            # HISTORY
-            # ---------------------------------------------
-
-            history = st.session_state.volume_history.get(
-                symbol,
-                []
-            )
-
-            repeat = False
-            previous_volume = None
-            repeat_ratio = 0
-
-            if history:
-
-                tolerance = float(
-                    settings["repeat_tolerance"]
-                )
-
-                for old_volume in reversed(history):
-
-                    if old_volume <= 0:
-                        continue
-
-                    ratio = volume / old_volume
-
-                    if ratio >= tolerance:
-
-                        repeat = True
-                        previous_volume = old_volume
-                        repeat_ratio = ratio
-                        break
-
-            results.append({
-                "Symbol": symbol,
-                "Price": price,
-                "Change": change,
-                "RVOL": rvol,
-                "Volume": volume,
-                "Dollar": dollar_volume,
-                "Repeat": repeat,
-                "PreviousVolume": previous_volume,
-                "RepeatRatio": repeat_ratio
-            })
-
-            # Update history after comparison.
-            history.append(float(volume))
-
-            if len(history) > 20:
-                history = history[-20:]
-
-            st.session_state.volume_history[symbol] = history
-
-        except Exception:
+        if data is None:
             continue
 
-    if not results:
+        repeat, previous_volume, ratio = check_repeat(
+            symbol,
+            data["Volume"]
+        )
 
+        data["Repeat"] = repeat
+
+        results.append(data)
+
+    if not results:
+        return pd.DataFrame()
+
+    return pd.DataFrame(results)
+
+
+# =========================================================
+# SCAN WATCHLIST FOR REPEAT VOLUME
+# =========================================================
+
+def scan_watchlist_repeat():
+
+    results = []
+
+    for symbol in st.session_state.watchlist:
+
+        data = get_stock_data(symbol)
+
+        if data is None:
+            continue
+
+        current_volume = data["Volume"]
+
+        repeat, previous_volume, ratio = check_repeat(
+            symbol,
+            current_volume
+        )
+
+        data["Repeat"] = repeat
+
+        data["PreviousVolume"] = (
+            previous_volume
+            if previous_volume is not None
+            else 0
+        )
+
+        data["RepeatRatio"] = ratio
+
+        results.append(data)
+
+        # Record current observation AFTER comparison
+        record_volume(
+            symbol,
+            current_volume
+        )
+
+    if not results:
         return pd.DataFrame()
 
     df = pd.DataFrame(results)
 
     df = df.sort_values(
-        ["Repeat", "RepeatRatio", "RVOL"],
-        ascending=[False, False, False]
+        ["Repeat", "RepeatRatio", "RVOL", "Change"],
+        ascending=[False, False, False, False]
     )
 
     return df
 
 
 # =========================================================
-# SIDEBAR FILTERS
+# SIDEBAR
 # =========================================================
 
 with st.sidebar:
@@ -750,15 +666,11 @@ with header2:
 
     if market_open():
 
-        st.success(
-            "🟢 Market Open"
-        )
+        st.success("🟢 Market Open")
 
     else:
 
-        st.info(
-            "⚪ Market Closed"
-        )
+        st.info("⚪ Market Closed")
 
 with header3:
 
@@ -767,31 +679,26 @@ with header3:
         use_container_width=True
     ):
 
-        # Always perform normal market scan
-        st.session_state.scan_results = scan_stocks()
+        st.session_state.scan_results = regular_scan()
 
-        # Also refresh repeat scanner
         if st.session_state.watchlist:
 
-            st.session_state.repeat_results = (
-                scan_watchlist_repeat()
+            st.session_state.watchlist_results = (
+                scan_watchlist_display()
             )
 
 
 # =========================================================
-# FIRST SCAN
+# INITIAL REGULAR SCAN
 # =========================================================
 
 if st.session_state.scan_results.empty:
 
-    st.session_state.scan_results = scan_stocks()
-
-
-df = st.session_state.scan_results
+    st.session_state.scan_results = regular_scan()
 
 
 # =========================================================
-# EXACT 35 / 65 LAYOUT
+# MAIN 35 / 65 LAYOUT
 # =========================================================
 
 left, right = st.columns(
@@ -807,56 +714,81 @@ left, right = st.columns(
 with left:
 
     # =====================================================
-    # THREE COLUMN HEADINGS / TABS
+    # THREE COLUMN HEADINGS
     # =====================================================
 
-    tab1, tab2, tab3 = st.columns(
-        [1, 1.2, 1]
+    b1, b2, b3 = st.columns(
+        [1, 1.2, 1.2]
     )
 
-    with tab1:
+
+    # =====================================================
+    # REGULAR SCAN BUTTON
+    # =====================================================
+
+    with b1:
 
         if st.button(
-            "SCANNER",
+            "REGULAR SCAN",
             use_container_width=True,
             type=(
                 "primary"
-                if st.session_state.active_view == "Scanner"
+                if st.session_state.active_view == "Regular Scan"
                 else "secondary"
             )
         ):
 
-            st.session_state.active_view = "Scanner"
+            st.session_state.active_view = "Regular Scan"
+
             st.rerun()
 
-    with tab2:
+
+    # =====================================================
+    # MY WATCHLIST BUTTON
+    # =====================================================
+
+    with b2:
 
         if st.button(
             "MY WATCHLIST",
             use_container_width=True,
             type=(
                 "primary"
-                if st.session_state.active_view == "Watchlist"
+                if st.session_state.active_view == "My Watchlist"
                 else "secondary"
             )
         ):
 
-            st.session_state.active_view = "Watchlist"
+            st.session_state.active_view = "My Watchlist"
+
             st.rerun()
 
-    with tab3:
+
+    # =====================================================
+    # SCAN WATCHLIST BUTTON
+    # =====================================================
+
+    with b3:
 
         if st.button(
-            "REPEAT SCAN",
+            "SCAN WATCHLIST",
             use_container_width=True,
             type=(
                 "primary"
-                if st.session_state.active_view == "Repeat"
+                if st.session_state.active_view == "Scan Watchlist"
                 else "secondary"
             )
         ):
 
-            st.session_state.active_view = "Repeat"
+            st.session_state.active_view = "Scan Watchlist"
+
+            # Immediately scan Watchlist
+            if st.session_state.watchlist:
+
+                st.session_state.repeat_results = (
+                    scan_watchlist_repeat()
+                )
+
             st.rerun()
 
 
@@ -864,14 +796,14 @@ with left:
 
 
     # =====================================================
-    # SCANNER VIEW
+    # REGULAR SCAN
     # =====================================================
 
-    if st.session_state.active_view == "Scanner":
+    if st.session_state.active_view == "Regular Scan":
 
-        st.markdown(
-            "#### 📋 Market Scanner"
-        )
+        st.markdown("#### 📋 Regular Market Scan")
+
+        df = st.session_state.scan_results
 
         if df.empty:
 
@@ -882,15 +814,14 @@ with left:
         else:
 
             # ---------------------------------------------
-            # TABLE HEADER
+            # HEADER
             # ---------------------------------------------
 
             h0, h1, h2, h3, h4, h5 = st.columns(
-                [0.45, 1.35, 1.1, 0.9, 0.9, 1.15]
+                [0.45, 1.35, 1.0, 0.85, 0.9, 1.1]
             )
 
-            h0.caption("")
-
+            h0.caption("WL")
             h1.caption("Symbol")
             h2.caption("LTP")
             h3.caption("%")
@@ -899,7 +830,7 @@ with left:
 
 
             # ---------------------------------------------
-            # STOCK ROWS
+            # ROWS
             # ---------------------------------------------
 
             for _, row in df.iterrows():
@@ -907,30 +838,31 @@ with left:
                 symbol = row["Symbol"]
 
                 c0, c1, c2, c3, c4, c5 = st.columns(
-                    [0.45, 1.35, 1.1, 0.9, 0.9, 1.15]
+                    [0.45, 1.35, 1.0, 0.85, 0.9, 1.1]
                 )
 
+
                 # -----------------------------------------
-                # WATCHLIST BUTTON
+                # WATCHLIST
                 # -----------------------------------------
 
                 with c0:
 
                     if symbol in st.session_state.watchlist:
 
-                        remove_label = "★"
+                        button_text = "★"
 
                     else:
 
-                        remove_label = "☆"
+                        button_text = "☆"
 
                     if st.button(
-                        remove_label,
-                        key=f"watch_{symbol}",
+                        button_text,
+                        key=f"wl_{symbol}",
                         help=(
-                            "Remove from Watchlist"
+                            "Remove from My Watchlist"
                             if symbol in st.session_state.watchlist
-                            else "Add to Watchlist"
+                            else "Add to My Watchlist"
                         )
                     ):
 
@@ -957,15 +889,17 @@ with left:
 
                     if row["Repeat"]:
 
-                        label = f"■ {symbol}"
+                        symbol_label = (
+                            f"■ {symbol}"
+                        )
 
                     else:
 
-                        label = symbol
+                        symbol_label = symbol
 
                     if st.button(
-                        label,
-                        key=f"select_scanner_{symbol}",
+                        symbol_label,
+                        key=f"regular_symbol_{symbol}",
                         use_container_width=True
                     ):
 
@@ -1021,10 +955,10 @@ with left:
 
 
     # =====================================================
-    # MY WATCHLIST VIEW
+    # MY WATCHLIST
     # =====================================================
 
-    elif st.session_state.active_view == "Watchlist":
+    elif st.session_state.active_view == "My Watchlist":
 
         st.markdown(
             f"#### ⭐ My Watchlist "
@@ -1034,8 +968,12 @@ with left:
         if not st.session_state.watchlist:
 
             st.info(
-                "Your Watchlist is empty. "
-                "Use ☆ beside a stock in Scanner to add it."
+                "No stocks in My Watchlist."
+            )
+
+            st.caption(
+                "Go to Regular Scan and click ☆ "
+                "to add stocks."
             )
 
         else:
@@ -1045,7 +983,7 @@ with left:
             # ---------------------------------------------
 
             h0, h1, h2, h3, h4 = st.columns(
-                [0.45, 1.45, 1.1, 1, 1]
+                [0.45, 1.45, 1.0, 0.9, 0.9]
             )
 
             h0.caption("")
@@ -1056,29 +994,30 @@ with left:
 
 
             # ---------------------------------------------
-            # GET DATA FROM NORMAL SCAN FIRST
+            # WATCHLIST DATA
             # ---------------------------------------------
 
-            watch_df = df[
-                df["Symbol"].isin(
-                    st.session_state.watchlist
-                )
-            ].copy()
-
-
-            # ---------------------------------------------
-            # WATCHLIST ROWS
-            # ---------------------------------------------
+            watch_df = st.session_state.watchlist_results
 
             for symbol in st.session_state.watchlist:
 
-                matching = watch_df[
-                    watch_df["Symbol"] == symbol
-                ]
+                matching = pd.DataFrame()
+
+                if (
+                    watch_df is not None
+                    and not watch_df.empty
+                    and "Symbol" in watch_df.columns
+                ):
+
+                    matching = watch_df[
+                        watch_df["Symbol"] == symbol
+                    ]
+
 
                 c0, c1, c2, c3, c4 = st.columns(
-                    [0.45, 1.45, 1.1, 1, 1]
+                    [0.45, 1.45, 1.0, 0.9, 0.9]
                 )
+
 
                 # -----------------------------------------
                 # REMOVE
@@ -1088,7 +1027,7 @@ with left:
 
                     if st.button(
                         "×",
-                        key=f"remove_{symbol}",
+                        key=f"remove_wl_{symbol}",
                         help="Remove from Watchlist"
                     ):
 
@@ -1107,7 +1046,7 @@ with left:
 
                     if st.button(
                         symbol,
-                        key=f"select_watch_{symbol}",
+                        key=f"watch_symbol_{symbol}",
                         use_container_width=True
                     ):
 
@@ -1125,16 +1064,19 @@ with left:
                     row = matching.iloc[0]
 
                     with c2:
+
                         st.caption(
                             f"${row['Price']:.2f}"
                         )
 
                     with c3:
+
                         st.caption(
                             f"{row['Change']:.1f}%"
                         )
 
                     with c4:
+
                         st.caption(
                             f"{row['RVOL']:.1f}x"
                         )
@@ -1151,11 +1093,12 @@ with left:
                         st.caption("--")
 
 
-            # ---------------------------------------------
-            # CLEAR WATCHLIST
-            # ---------------------------------------------
-
             st.markdown("")
+
+
+            # ---------------------------------------------
+            # REMOVE ALL
+            # ---------------------------------------------
 
             if st.button(
                 "🗑 Clear Watchlist",
@@ -1164,45 +1107,61 @@ with left:
 
                 st.session_state.watchlist = []
 
+                st.session_state.watchlist_results = (
+                    pd.DataFrame()
+                )
+
+                st.session_state.repeat_results = (
+                    pd.DataFrame()
+                )
+
                 st.rerun()
 
 
     # =====================================================
-    # REPEAT SCAN VIEW
+    # SCAN WATCHLIST
     # =====================================================
 
-    elif st.session_state.active_view == "Repeat":
+    elif st.session_state.active_view == "Scan Watchlist":
 
         st.markdown(
-            "#### 🔁 Repeat Volume Scan"
+            "#### 🔁 Scan Watchlist"
         )
 
         st.caption(
-            "Only stocks in My Watchlist are monitored here."
+            "Repeat-volume scanner — Watchlist stocks only"
         )
 
 
         # ---------------------------------------------
-        # RUN REPEAT SCAN
+        # MANUAL SCAN BUTTON
         # ---------------------------------------------
 
         if st.button(
-            "🔁 Scan Watchlist",
+            "🔄 Scan Watchlist Now",
             use_container_width=True
         ):
 
-            st.session_state.repeat_results = (
-                scan_watchlist_repeat()
-            )
+            if st.session_state.watchlist:
 
-            st.rerun()
+                st.session_state.repeat_results = (
+                    scan_watchlist_repeat()
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "Your Watchlist is empty."
+                )
 
 
         repeat_df = st.session_state.repeat_results
 
 
         # ---------------------------------------------
-        # NO WATCHLIST
+        # EMPTY WATCHLIST
         # ---------------------------------------------
 
         if not st.session_state.watchlist:
@@ -1213,25 +1172,24 @@ with left:
 
 
         # ---------------------------------------------
-        # NO RESULTS
+        # RESULTS
         # ---------------------------------------------
 
         elif repeat_df.empty:
 
             st.info(
-                "No repeat-volume data yet. "
-                "Run Scan Watchlist."
+                "Press 'Scan Watchlist Now' "
+                "to scan your Watchlist."
             )
-
-
-        # ---------------------------------------------
-        # RESULTS
-        # ---------------------------------------------
 
         else:
 
+            # ---------------------------------------------
+            # HEADER
+            # ---------------------------------------------
+
             h1, h2, h3, h4, h5, h6 = st.columns(
-                [1.25, 0.95, 0.8, 0.9, 1.0, 0.8]
+                [1.35, 0.9, 0.85, 0.85, 1.0, 0.9]
             )
 
             h1.caption("Symbol")
@@ -1242,12 +1200,16 @@ with left:
             h6.caption("Repeat")
 
 
+            # ---------------------------------------------
+            # RESULTS
+            # ---------------------------------------------
+
             for _, row in repeat_df.iterrows():
 
                 symbol = row["Symbol"]
 
                 c1, c2, c3, c4, c5, c6 = st.columns(
-                    [1.25, 0.95, 0.8, 0.9, 1.0, 0.8]
+                    [1.35, 0.9, 0.85, 0.85, 1.0, 0.9]
                 )
 
 
@@ -1267,7 +1229,7 @@ with left:
 
                     if st.button(
                         label,
-                        key=f"select_repeat_{symbol}",
+                        key=f"repeat_symbol_{symbol}",
                         use_container_width=True
                     ):
 
@@ -1323,10 +1285,16 @@ with left:
                             f"{volume / 1_000_000:.1f}M"
                         )
 
-                    else:
+                    elif volume >= 1_000:
 
                         text = (
                             f"{volume / 1_000:.0f}K"
+                        )
+
+                    else:
+
+                        text = str(
+                            int(volume)
                         )
 
                     st.caption(text)
@@ -1363,10 +1331,6 @@ with right:
         f"### 📊 {symbol}"
     )
 
-
-    # =====================================================
-    # TRADINGVIEW
-    # =====================================================
 
     tradingview_url = (
         "https://www.tradingview.com/widgetembed/"
