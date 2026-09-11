@@ -6,7 +6,6 @@ import json
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from webull.core.client import ApiClient
 from webull.data.data_client import DataClient
@@ -35,6 +34,9 @@ DEFAULT_WATCHLIST = [
     "AMD"
 ]
 
+# Same height for left scanner and right TradingView
+PANEL_HEIGHT = 900
+
 
 # ============================================================
 # CSS
@@ -44,28 +46,46 @@ st.markdown(
     """
     <style>
 
-    /* Main page */
+    /* -------------------------------------------------------
+       PAGE
+    ------------------------------------------------------- */
+
     .block-container {
-        padding-top: 0.5rem;
+        padding-top: 0.35rem;
         padding-bottom: 0rem;
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
+        padding-left: 0.7rem;
+        padding-right: 0.7rem;
     }
 
-    /* Scanner title */
+    /* Remove unnecessary spacing */
+    div[data-testid="stVerticalBlock"] {
+        gap: 0.25rem;
+    }
+
+    /* -------------------------------------------------------
+       SCANNER TITLE
+    ------------------------------------------------------- */
+
     .scanner-title {
         font-size: 22px;
         font-weight: 700;
-        margin-bottom: 5px;
         line-height: 1.1;
+        margin: 0;
+        padding: 0;
     }
 
-    /* Small text */
+    /* -------------------------------------------------------
+       SMALL TEXT
+    ------------------------------------------------------- */
+
     .small {
         font-size: 11px;
     }
 
-    /* Green / red */
+    /* -------------------------------------------------------
+       COLOURS
+    ------------------------------------------------------- */
+
     .green {
         color: #00c853;
         font-weight: 700;
@@ -76,35 +96,44 @@ st.markdown(
         font-weight: 700;
     }
 
-    /* Repeat marker */
+    /* -------------------------------------------------------
+       REPEAT MARKER
+    ------------------------------------------------------- */
+
     .repeat {
         color: white;
         font-size: 16px;
-        font-weight: bold;
+        font-weight: 700;
+        line-height: 1;
     }
 
-    /* Result row */
-    .stock-row {
-        padding: 3px 0px;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
+    /* -------------------------------------------------------
+       TABS
+    ------------------------------------------------------- */
 
-    /* Make tabs compact */
     button[data-baseweb="tab"] {
-        font-size: 12px;
-        font-weight: 600;
-        padding-left: 8px;
-        padding-right: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        padding-left: 7px;
+        padding-right: 7px;
     }
 
-    /* Reduce vertical spacing */
-    div[data-testid="stVerticalBlock"] {
-        gap: 0.35rem;
-    }
+    /* -------------------------------------------------------
+       TRADINGVIEW
+    ------------------------------------------------------- */
 
-    /* TradingView iframe */
     iframe {
         border: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* -------------------------------------------------------
+       BUTTONS
+    ------------------------------------------------------- */
+
+    button {
+        font-size: 12px !important;
     }
 
     </style>
@@ -143,9 +172,12 @@ def get_webull_client():
 
 
 try:
+
     webull = get_webull_client()
     WEBULL_CONNECTED = True
+
 except Exception:
+
     webull = None
     WEBULL_CONNECTED = False
 
@@ -158,7 +190,7 @@ if "selected_symbol" not in st.session_state:
     st.session_state.selected_symbol = "NVDA"
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = DEFAULT_WATCHLIST.copy()
+    st.session_state.watchlist = []
 
 if "regular_results" not in st.session_state:
     st.session_state.regular_results = pd.DataFrame()
@@ -174,7 +206,7 @@ if "last_watch_scan" not in st.session_state:
 
 
 # ============================================================
-# WATCHLIST FUNCTIONS
+# WATCHLIST
 # ============================================================
 
 def load_watchlist():
@@ -183,6 +215,7 @@ def load_watchlist():
         return DEFAULT_WATCHLIST.copy()
 
     try:
+
         with open(WATCHLIST_FILE, "r") as f:
             data = json.load(f)
 
@@ -198,18 +231,24 @@ def load_watchlist():
 def save_watchlist():
 
     try:
+
         with open(WATCHLIST_FILE, "w") as f:
+
             json.dump(
                 st.session_state.watchlist,
                 f,
                 indent=2
             )
+
     except Exception:
         pass
 
 
 if not st.session_state.watchlist:
-    st.session_state.watchlist = load_watchlist()
+
+    st.session_state.watchlist = (
+        load_watchlist()
+    )
 
 
 # ============================================================
@@ -218,44 +257,59 @@ if not st.session_state.watchlist:
 
 def select_stock(symbol):
 
-    symbol = str(symbol).upper().strip()
+    symbol = str(
+        symbol
+    ).upper().strip()
 
     if symbol:
-        st.session_state.selected_symbol = symbol
+
+        st.session_state.selected_symbol = (
+            symbol
+        )
 
 
 def add_to_watchlist(symbol):
 
-    symbol = str(symbol).upper().strip()
+    symbol = str(
+        symbol
+    ).upper().strip()
 
     if not symbol:
         return
 
     if symbol not in st.session_state.watchlist:
 
-        st.session_state.watchlist.append(symbol)
+        st.session_state.watchlist.append(
+            symbol
+        )
 
         save_watchlist()
 
 
 def remove_from_watchlist(symbol):
 
-    symbol = str(symbol).upper().strip()
+    symbol = str(
+        symbol
+    ).upper().strip()
 
     if symbol in st.session_state.watchlist:
 
-        st.session_state.watchlist.remove(symbol)
+        st.session_state.watchlist.remove(
+            symbol
+        )
 
         save_watchlist()
 
 
 # ============================================================
-# TRADINGVIEW
+# TRADINGVIEW CHART
 # ============================================================
 
 def tradingview_chart(symbol):
 
-    symbol = str(symbol).upper().strip()
+    symbol = str(
+        symbol
+    ).upper().strip()
 
     url = (
         "https://www.tradingview.com/widgetembed/"
@@ -272,22 +326,50 @@ def tradingview_chart(symbol):
     )
 
     html = f"""
-    <iframe
-        src="{url}"
-        style="
-            width:100%;
-            height:720px;
-            border:none;
-            display:block;
-            margin:0;
-            padding:0;
-        ">
-    </iframe>
+    <html>
+    <head>
+
+    <style>
+
+        html,
+        body {{
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #131722;
+        }}
+
+        iframe {{
+            width: 100%;
+            height: 100%;
+            border: 0;
+            margin: 0;
+            padding: 0;
+            display: block;
+        }}
+
+    </style>
+
+    </head>
+
+    <body>
+
+        <iframe
+            src="{url}"
+            allowtransparency="true"
+            frameborder="0"
+            scrolling="no">
+        </iframe>
+
+    </body>
+    </html>
     """
 
     components.html(
         html,
-        height=720,
+        height=PANEL_HEIGHT,
         scrolling=False
     )
 
@@ -304,15 +386,24 @@ def safe_float(value, default=0.0):
             return default
 
         if isinstance(value, str):
-            value = value.replace(",", "")
+
+            value = value.replace(
+                ",",
+                ""
+            )
 
         return float(value)
 
     except Exception:
+
         return default
 
 
-def get_value(obj, names, default=None):
+def get_value(
+    obj,
+    names,
+    default=None
+):
 
     if obj is None:
         return default
@@ -329,7 +420,10 @@ def get_value(obj, names, default=None):
             else:
 
                 if hasattr(obj, name):
-                    return getattr(obj, name)
+                    return getattr(
+                        obj,
+                        name
+                    )
 
         except Exception:
             pass
@@ -338,7 +432,7 @@ def get_value(obj, names, default=None):
 
 
 # ============================================================
-# SNAPSHOT
+# SNAPSHOTS
 # ============================================================
 
 def get_snapshots(symbols):
@@ -348,9 +442,12 @@ def get_snapshots(symbols):
 
     try:
 
-        result = webull.market_data.get_stock_snapshot(
-            symbols,
-            Category.US_STOCK.name
+        result = (
+            webull.market_data
+            .get_stock_snapshot(
+                symbols,
+                Category.US_STOCK.name
+            )
         )
 
         if result is None:
@@ -380,11 +477,15 @@ def get_snapshots(symbols):
                 )
 
                 if symbol:
-                    snapshots[str(symbol).upper()] = item
+
+                    snapshots[
+                        str(symbol).upper()
+                    ] = item
 
         return snapshots
 
     except Exception:
+
         return {}
 
 
@@ -399,10 +500,13 @@ def get_history(symbol):
 
     try:
 
-        result = webull.market_data.get_history_bar(
-            symbol,
-            Category.US_STOCK.name,
-            Timespan.M1.name
+        result = (
+            webull.market_data
+            .get_history_bar(
+                symbol,
+                Category.US_STOCK.name,
+                Timespan.M1.name
+            )
         )
 
         if result is None:
@@ -410,8 +514,10 @@ def get_history(symbol):
 
         if isinstance(result, dict):
 
-            if "data" in result:
-                result = result["data"]
+            result = result.get(
+                "data",
+                result
+            )
 
         if isinstance(result, list):
 
@@ -421,9 +527,12 @@ def get_history(symbol):
 
         if isinstance(result, pd.DataFrame):
 
-            return normalise_bars(result)
+            return normalise_bars(
+                result
+            )
 
     except Exception:
+
         pass
 
     return pd.DataFrame()
@@ -440,11 +549,14 @@ def get_batch_history(symbols):
 
     try:
 
-        result = webull.market_data.get_batch_history_bar(
-            symbols,
-            Category.US_STOCK.name,
-            Timespan.M1.name,
-            1200
+        result = (
+            webull.market_data
+            .get_batch_history_bar(
+                symbols,
+                Category.US_STOCK.name,
+                Timespan.M1.name,
+                1200
+            )
         )
 
         if result is None:
@@ -465,13 +577,18 @@ def get_batch_history(symbols):
 
                 try:
 
-                    df = pd.DataFrame(data)
+                    df = pd.DataFrame(
+                        data
+                    )
 
                     histories[
                         str(symbol).upper()
-                    ] = normalise_bars(df)
+                    ] = normalise_bars(
+                        df
+                    )
 
                 except Exception:
+
                     pass
 
         elif isinstance(result, list):
@@ -503,14 +620,18 @@ def get_batch_history(symbols):
 
                     histories[
                         str(symbol).upper()
-                    ] = normalise_bars(df)
+                    ] = normalise_bars(
+                        df
+                    )
 
                 except Exception:
+
                     pass
 
         return histories
 
     except Exception:
+
         return {}
 
 
@@ -529,24 +650,54 @@ def normalise_bars(df):
 
     for col in df.columns:
 
-        c = str(col).lower()
+        c = str(
+            col
+        ).lower()
 
-        if c in ["time", "timestamp", "datetime", "t"]:
+        if c in [
+            "time",
+            "timestamp",
+            "datetime",
+            "t"
+        ]:
+
             rename_map[col] = "time"
 
-        elif c in ["open", "o"]:
+        elif c in [
+            "open",
+            "o"
+        ]:
+
             rename_map[col] = "open"
 
-        elif c in ["high", "h"]:
+        elif c in [
+            "high",
+            "h"
+        ]:
+
             rename_map[col] = "high"
 
-        elif c in ["low", "l"]:
+        elif c in [
+            "low",
+            "l"
+        ]:
+
             rename_map[col] = "low"
 
-        elif c in ["close", "c", "price"]:
+        elif c in [
+            "close",
+            "c",
+            "price"
+        ]:
+
             rename_map[col] = "close"
 
-        elif c in ["volume", "v", "vol"]:
+        elif c in [
+            "volume",
+            "v",
+            "vol"
+        ]:
+
             rename_map[col] = "volume"
 
     df = df.rename(
@@ -590,18 +741,30 @@ def normalise_bars(df):
                 )
 
         except Exception:
+
             pass
 
-    df = df.dropna(
-        subset=[
-            c for c in ["time", "volume"]
-            if c in df.columns
-        ]
-    )
+    required = []
 
-    return df.sort_values(
-        "time"
-    ).reset_index(
+    if "time" in df.columns:
+        required.append("time")
+
+    if "volume" in df.columns:
+        required.append("volume")
+
+    if required:
+
+        df = df.dropna(
+            subset=required
+        )
+
+    if "time" in df.columns:
+
+        df = df.sort_values(
+            "time"
+        )
+
+    return df.reset_index(
         drop=True
     )
 
@@ -651,6 +814,7 @@ def repeat_volume(
         )
 
         if ratio >= tolerance:
+
             return True
 
     return False
@@ -672,11 +836,18 @@ def calculate_rvol(
     if current_volume <= 0:
         return 0.0
 
-    historical = [
-        safe_float(v)
-        for v in historical_volumes
-        if safe_float(v) > 0
-    ]
+    historical = []
+
+    for value in historical_volumes:
+
+        value = safe_float(
+            value
+        )
+
+        if value > 0:
+            historical.append(
+                value
+            )
 
     if not historical:
         return 0.0
@@ -695,7 +866,7 @@ def calculate_rvol(
 
 
 # ============================================================
-# DAILY VOLUME EXTRACTION
+# DAILY VOLUME
 # ============================================================
 
 def get_daily_volumes(bars):
@@ -712,8 +883,7 @@ def get_daily_volumes(bars):
     temp = bars.copy()
 
     temp["date"] = (
-        temp["time"]
-        .dt.date
+        temp["time"].dt.date
     )
 
     daily = (
@@ -747,13 +917,14 @@ def build_regular_results(
         if str(s).strip()
     ]
 
+    symbols = list(
+        dict.fromkeys(
+            symbols
+        )
+    )
+
     if not symbols:
         return pd.DataFrame()
-
-    # Remove duplicates
-    symbols = list(
-        dict.fromkeys(symbols)
-    )
 
     snapshots = get_snapshots(
         symbols
@@ -827,18 +998,23 @@ def build_regular_results(
             pd.DataFrame()
         )
 
-        historical_daily = (
+        daily_volumes = (
             get_daily_volumes(
                 bars
             )
         )
 
-        # Exclude today's volume
-        historical_volumes = (
-            historical_daily[-11:-1]
-            if len(historical_daily) >= 2
-            else historical_daily[:-1]
-        )
+        if len(daily_volumes) >= 2:
+
+            historical_volumes = (
+                daily_volumes[-11:-1]
+            )
+
+        else:
+
+            historical_volumes = (
+                daily_volumes[:-1]
+            )
 
         rvol = calculate_rvol(
             volume,
@@ -850,7 +1026,10 @@ def build_regular_results(
             repeat_tolerance
         )
 
-        # Filters
+        # ----------------------------------------------------
+        # FILTERS
+        # ----------------------------------------------------
+
         if price < min_price:
             continue
 
@@ -894,6 +1073,7 @@ def build_regular_results(
         )
 
     if not rows:
+
         return pd.DataFrame(
             columns=[
                 "Time",
@@ -908,11 +1088,19 @@ def build_regular_results(
             ]
         )
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(
+        rows
+    )
 
     df = df.sort_values(
-        ["RVOL", "% Change"],
-        ascending=[False, False]
+        [
+            "RVOL",
+            "% Change"
+        ],
+        ascending=[
+            False,
+            False
+        ]
     )
 
     return df.reset_index(
@@ -991,17 +1179,23 @@ def build_watchlist_results(
             pd.DataFrame()
         )
 
-        historical_daily = (
+        daily_volumes = (
             get_daily_volumes(
                 bars
             )
         )
 
-        historical_volumes = (
-            historical_daily[-11:-1]
-            if len(historical_daily) >= 2
-            else historical_daily[:-1]
-        )
+        if len(daily_volumes) >= 2:
+
+            historical_volumes = (
+                daily_volumes[-11:-1]
+            )
+
+        else:
+
+            historical_volumes = (
+                daily_volumes[:-1]
+            )
 
         rvol = calculate_rvol(
             volume,
@@ -1036,7 +1230,9 @@ def build_watchlist_results(
     if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(
+        rows
+    )
 
     df = df.sort_values(
         "RVOL",
@@ -1059,19 +1255,28 @@ def format_volume(value):
     )
 
     if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
+
+        return (
+            f"{value / 1_000_000_000:.2f}B"
+        )
 
     if value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
+
+        return (
+            f"{value / 1_000_000:.2f}M"
+        )
 
     if value >= 1_000:
-        return f"{value / 1_000:.1f}K"
+
+        return (
+            f"{value / 1_000:.1f}K"
+        )
 
     return f"{value:,.0f}"
 
 
 # ============================================================
-# MAIN LAYOUT
+# MAIN 35 / 65 LAYOUT
 # ============================================================
 
 left, right = st.columns(
@@ -1081,20 +1286,24 @@ left, right = st.columns(
 
 
 # ============================================================
-# LEFT SIDE
+# LEFT SCANNER
 # ============================================================
 
 with left:
 
     st.markdown(
-        '<div class="scanner-title">US STOCK SCANNER</div>',
+        '<div class="scanner-title">'
+        'US STOCK SCANNER'
+        '</div>',
         unsafe_allow_html=True
     )
 
     if WEBULL_CONNECTED:
 
         st.markdown(
-            '<span class="green">● Webull connected</span>',
+            '<span class="green">'
+            '● Webull connected'
+            '</span>',
             unsafe_allow_html=True
         )
 
@@ -1105,7 +1314,7 @@ with left:
         )
 
     # --------------------------------------------------------
-    # TABS
+    # THREE TABS
     # --------------------------------------------------------
 
     (
@@ -1122,7 +1331,7 @@ with left:
 
 
     # ========================================================
-    # WATCHLIST TAB
+    # WATCHLIST
     # ========================================================
 
     with watchlist_tab:
@@ -1158,13 +1367,13 @@ with left:
 
                     st.rerun()
 
-        st.markdown(
-            "---"
-        )
+        st.markdown("---")
 
         if st.session_state.watchlist:
 
-            for symbol in st.session_state.watchlist:
+            for symbol in (
+                st.session_state.watchlist
+            ):
 
                 col1, col2 = st.columns(
                     [4, 1]
@@ -1203,7 +1412,7 @@ with left:
 
 
     # ========================================================
-    # REGULAR SCAN TAB
+    # REGULAR SCAN
     # ========================================================
 
     with regular_tab:
@@ -1344,8 +1553,10 @@ with left:
         if st.session_state.last_regular_scan:
 
             st.caption(
-                f"Last scan: "
-                f"{st.session_state.last_regular_scan}"
+                "Last scan: "
+                + str(
+                    st.session_state.last_regular_scan
+                )
             )
 
         results = (
@@ -1353,7 +1564,7 @@ with left:
         )
 
         # ----------------------------------------------------
-        # COLUMN HEADERS
+        # HEADERS
         # ----------------------------------------------------
 
         h1, h2, h3, h4 = st.columns(
@@ -1361,30 +1572,25 @@ with left:
         )
 
         with h1:
-            st.markdown(
-                "**STOCK**"
-            )
+            st.markdown("**STOCK**")
 
         with h2:
-            st.markdown(
-                "**%**"
-            )
+            st.markdown("**%**")
 
         with h3:
-            st.markdown(
-                "**RVOL**"
-            )
+            st.markdown("**RVOL**")
 
         with h4:
-            st.markdown(
-                "**REP**"
-            )
+            st.markdown("**REP**")
 
         # ----------------------------------------------------
         # RESULTS
         # ----------------------------------------------------
 
-        if results is not None and not results.empty:
+        if (
+            results is not None
+            and not results.empty
+        ):
 
             for _, row in results.iterrows():
 
@@ -1453,7 +1659,9 @@ with left:
                     if row["Repeat"]:
 
                         st.markdown(
-                            '<span class="repeat">■</span>',
+                            '<span class="repeat">'
+                            '■'
+                            '</span>',
                             unsafe_allow_html=True
                         )
 
@@ -1509,8 +1717,10 @@ with left:
         if st.session_state.last_watch_scan:
 
             st.caption(
-                f"Last scan: "
-                f"{st.session_state.last_watch_scan}"
+                "Last scan: "
+                + str(
+                    st.session_state.last_watch_scan
+                )
             )
 
         # ----------------------------------------------------
@@ -1522,24 +1732,16 @@ with left:
         )
 
         with h1:
-            st.markdown(
-                "**STOCK**"
-            )
+            st.markdown("**STOCK**")
 
         with h2:
-            st.markdown(
-                "**VOLUME**"
-            )
+            st.markdown("**VOLUME**")
 
         with h3:
-            st.markdown(
-                "**RVOL**"
-            )
+            st.markdown("**RVOL**")
 
         with h4:
-            st.markdown(
-                "**REP**"
-            )
+            st.markdown("**REP**")
 
         watch_results = (
             st.session_state.watch_results
@@ -1589,7 +1791,9 @@ with left:
                     if row["Repeat"]:
 
                         st.markdown(
-                            '<span class="repeat">■</span>',
+                            '<span class="repeat">'
+                            '■'
+                            '</span>',
                             unsafe_allow_html=True
                         )
 
@@ -1601,7 +1805,8 @@ with left:
 
 
 # ============================================================
-# RIGHT SIDE - TRADINGVIEW
+# RIGHT SIDE
+# TRADINGVIEW SAME HEIGHT AS SCANNER
 # ============================================================
 
 with right:
@@ -1610,10 +1815,9 @@ with right:
         st.session_state.selected_symbol
     )
 
-    # IMPORTANT:
-    # No heading/caption is placed above the chart.
-    # This keeps the TradingView chart at exactly
-    # the same top level as the left scanner.
+    # No heading above chart.
+    # This keeps the chart top aligned with
+    # the scanner title on the left.
 
     tradingview_chart(
         selected
